@@ -3,6 +3,22 @@
 **Last Updated:** October 25, 2025  
 **Purpose:** Available services for deployment on the Proxmox cluster
 
+## Deployed Services
+
+### Remote Access
+- [x] **Tailscale** (CT 100) - 192.168.40.10
+  - Status: ✅ Operational
+  - Tailscale IP: 100.89.200.114
+  - Subnet routing: Management, Services, Home networks
+  - [Deployment Guide](01-tailscale-deployment.md)
+
+### Network Services  
+- [x] **Pi-hole** (CT 101) - 192.168.40.53
+  - Status: ✅ Operational
+  - Admin: http://192.168.40.53/admin
+  - Blocking: ~25% average
+  - [Deployment Guide](02-pihole-deployment.md)
+
 ## Deployment Priority Tiers
 
 ### 🥇 Tier 1: Essential Infrastructure
