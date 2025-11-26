@@ -13,6 +13,10 @@
 |:---:|:---:|:---:|:---:|
 | Live cluster status | Common tasks | Full documentation | Automation tools |
 
+## 📋 Project Instructions
+
+For detailed instructions on working with this project in Claude AI, see [PROJECT_INSTRUCTIONS.md](./PROJECT_INSTRUCTIONS.md)
+
 ## 📊 Infrastructure Overview
 ```
 ┌─────────────────────────────────────────────────────────┐
