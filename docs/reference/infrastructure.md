@@ -2,7 +2,7 @@
 
 Complete hardware inventory and specifications for the homelab cluster.
 
-Last Updated: 2025-11-24  
+Last Updated: 2025-11-28  
 Status: ✅ Verified via system audit
 
 ## 📊 Hardware Inventory
@@ -11,9 +11,9 @@ Status: ✅ Verified via system audit
 
 | Node | Model | CPU | RAM | Storage | IP | MAC | Status |
 |------|-------|-----|-----|---------|-----|-----|--------|
-| **pve1** | HP Elite Mini 800 G9 | Intel i5-12500T (6C/12T) | 32GB DDR5 | 500GB NVMe | 192.168.10.11 | TBD | ✅ Active |
-| **pve2** | HP Elite Mini 800 G9 | Intel i5-12500T (6C/12T) | 32GB DDR5 | 500GB NVMe | 192.168.10.12 | TBD | ✅ Active |
-| **pve3** | HP Elite Mini 800 G9 | Intel i5-12500T (6C/12T) | 32GB DDR5 | 500GB NVMe | 192.168.10.13 | TBD | ✅ Active |
+| **pve1** | HP Elite Mini 800 G9 | Intel i5-12500T (6C/12T) | 32GB DDR5 | 500GB NVMe | 192.168.10.11 | 2c:58:b9:f0:ad:aa | ✅ Active |
+| **pve2** | HP Elite Mini 800 G9 | Intel i5-12500T (6C/12T) | 32GB DDR5 | 500GB NVMe | 192.168.10.12 | 2c:58:b9:f0:35:4e | ✅ Active |
+| **pve3** | HP Elite Mini 800 G9 | Intel i5-12500T (6C/12T) | 32GB DDR5 | 500GB NVMe | 192.168.10.13 | 2c:58:b9:f0:ad:65 | ✅ Active |
 
 **Aggregate Resources:**
 - Total CPU: 18 cores / 36 threads
@@ -27,6 +27,21 @@ Status: ✅ Verified via system audit
 | **Router** | Protectli FW4C | 4× 2.5GbE Intel, 8GB RAM | 192.168.10.1 | OPNsense firewall | ✅ Active |
 | **Switch** | UniFi Switch Lite 16 PoE | 16 ports, 8 PoE+, 45W | 192.168.1.104 | Core switching | ✅ Active |
 | **ISP Router** | NBN HFC | 50/20 Mbps | 10.1.1.1 | Internet gateway | ✅ Active |
+
+### WiFi Infrastructure
+
+| Device | Model | Specs | IP | Location | Switch Port | Status |
+|--------|-------|-------|-----|----------|-------------|--------|
+| **AP-Upstairs** | UniFi U6+ | WiFi 6, 2x2 MIMO | 192.168.1.145 | Office/Upstairs | Port 1 | ✅ Active |
+| **AP-Downstairs** | UniFi U6+ | WiFi 6, 2x2 MIMO | 192.168.1.146 | Downstairs | Port 2 | ✅ Active |
+| **AP-Neighbor** | UniFi U6+ | WiFi 6, 2x2 MIMO | 192.168.1.147 | Neighbor Garage | Port 4 | ✅ Active |
+
+**WiFi SSIDs:**
+| SSID | VLAN | Broadcast APs | Purpose |
+|------|------|---------------|---------|
+| HomeNet | 40 | AP-Upstairs, AP-Downstairs | Trusted devices |
+| IoT | 60 | AP-Upstairs, AP-Downstairs | Smart home devices |
+| Neighbor | 50 | AP-Neighbor only | Neighbor internet access |
 
 ### Storage Systems
 
@@ -53,15 +68,16 @@ Status: ✅ Verified via system audit
 | **Storage** | 30 | 192.168.30.0/24 | None | ❌ | Ceph traffic | Full |
 | **Services** | 40 | 192.168.40.0/24 | 192.168.40.1 | ❌ | Containers/VMs | No |
 | **Neighbor** | 50 | 192.168.50.0/24 | 192.168.50.1 | ✅ .100-.200 | Guest WiFi | Full |
+| **IoT** | 60 | 192.168.60.0/24 | 192.168.60.1 | ✅ .100-.200 | Smart devices | Partial |
 
 ### Switch Port Assignments
 
 | Port | Device | VLAN Config | PoE | Cable | Notes | Verified |
 |------|--------|-------------|-----|-------|-------|----------|
-| 1 | Empty | - | ✅ | - | Available for AP | - |
-| 2 | Empty | - | ✅ | - | Available for AP | - |
-| 3 | OPNsense | Trunk (All) | ❌ | Cat6 | Router uplink | ✅ |
-| 4 | Empty | - | ✅ | - | Available for AP | - |
+| 1 | AP-Upstairs | Trunk (All) | ✅ | Cat6 | UniFi U6+ | ✅ |
+| 2 | AP-Downstairs | Trunk (All) | ✅ | Cat6 | UniFi U6+ | ✅ |
+| 3 | OPNsense | Custom (10,20,30,40,50,60) | ❌ | Cat6 | Router uplink | ✅ |
+| 4 | AP-Neighbor | Trunk (All) | ✅ | Cat6 | UniFi U6+ | ✅ |
 | 5 | Empty | - | ❌ | - | Available | - |
 | 6 | Empty | - | ✅ | - | Available | - |
 | 7 | Reserved | - | ✅ | - | Future use | - |
@@ -75,7 +91,9 @@ Status: ✅ Verified via system audit
 | 15 | Mac Pro | Native VLAN 30 | ❌ | Cat6 | NAS storage | ✅ |
 | 16 | Empty | - | ✅ | - | Available | - |
 
-**PoE Budget:** 45W total, ~5W used (Pi only), 40W available
+**PoE Budget:** 45W total, ~35W used (3 APs + Pi), 10W available
+
+**Critical Note:** Port 3 (OPNsense) must use **Custom** tagged VLAN selection, not "Allow All". When creating new VLANs, manually add them to Port 3's tagged list.
 
 ### IP Address Allocations
 
@@ -100,12 +118,19 @@ Status: ✅ Verified via system audit
 | .31 | CT104 | Nextcloud | Cloud storage |
 | .32 | CT105 | MariaDB | Database |
 | .33 | CT106 | Redis | Cache (not active) |
-| .40-.49 | Media services | Reserved for future | - |
+| .40 | CT107 | UniFi Controller | Network management |
+| .41-.49 | Network services | Reserved | - |
 | .50-.59 | Development | Reserved for future | - |
 | .53 | CT101 | Pi-hole | DNS server |
 | .60-.69 | Automation | n8n, Home Assistant | - |
 | .61 | CT112 | n8n | Workflows |
 | .70-.99 | Future expansion | - | - |
+
+#### IoT VLAN (192.168.60.0/24)
+| IP Range | Assignment | Notes |
+|----------|------------|-------|
+| .1 | OPNsense | Gateway |
+| .100-.200 | DHCP pool | IoT devices |
 
 ## 🔌 Power Configuration
 
@@ -118,15 +143,16 @@ Status: ✅ Verified via system audit
 | pve3 | 25 | 45 | $5.40 | TDP 35W CPU |
 | OPNsense | 15 | 20 | $3.60 | Protectli FW4C |
 | Switch | 10 | 15 | $2.16 | UniFi 16 PoE |
+| APs (×3) | 30 | 40 | $6.48 | ~10-13W each |
 | Mac Pro | 45 | 80 | $9.72 | With Pegasus array |
-| **Total** | **145W** | **250W** | **$31.68** | At $0.30/kWh |
+| **Total** | **175W** | **290W** | **$38.16** | At $0.30/kWh |
 
 ### UPS Requirements (Planned)
 
 | Requirement | Specification | Notes |
 |-------------|--------------|-------|
 | Runtime | 30 minutes minimum | For graceful shutdown |
-| Capacity | 600VA minimum | Based on 145W idle |
+| Capacity | 800VA minimum | Based on 175W idle |
 | Outlets | 6+ required | All critical infrastructure |
 | Network | USB or network card | For monitoring |
 
@@ -141,7 +167,7 @@ Status: ✅ Verified via system audit
 
 ### External Access Points
 - **Tailscale Admin:** https://login.tailscale.com
-- **GitHub Repo:** https://github.com/[username]/homelab-proxmox-darwin
+- **GitHub Repo:** https://github.com/lasit/homelab-proxmox-cluster
 - **No port forwarding** - All access via Tailscale VPN
 
 ## 🔧 Physical Layout
@@ -175,12 +201,15 @@ U1: [ Mac Pro NAS ]
 | HP Elite Mini ×3 | Oct 2025 | Oct 2028 | 3-year warranty |
 | Protectli FW4C | Nov 2025 | Nov 2026 | 1-year warranty |
 | UniFi Switch | Oct 2025 | Oct 2026 | 1-year warranty |
+| UniFi U6+ ×3 | Nov 2025 | Nov 2027 | 2-year warranty |
 
 ### Firmware Versions
 | Device | Current Version | Last Updated | Notes |
 |--------|----------------|--------------|-------|
 | OPNsense | 25.1 | Nov 2025 | Latest stable |
-| UniFi Switch | 7.0.100 | Nov 2025 | Latest stable |
+| UniFi Switch | 7.2.123 | Nov 2025 | Latest stable |
+| UniFi U6+ APs | 6.7.31 | Nov 2025 | Latest stable |
+| UniFi Controller | 10.0.160 | Nov 2025 | Latest stable |
 | Proxmox VE | 8.2 | Oct 2025 | Latest stable |
 
 ---

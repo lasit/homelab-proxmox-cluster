@@ -1,7 +1,7 @@
 # 🌐 Network Configuration Table
 
-**Last Updated:** 2025-11-24  
-**Status:** ✅ Operational (1 DNS issue)  
+**Last Updated:** 2025-11-28  
+**Status:** ✅ Operational  
 **Single Source of Truth for ALL Network Information**
 
 ## 📊 Network Overview
@@ -19,7 +19,8 @@ INTERNET
                             ├─► VLAN 20: Corosync (192.168.20.0/24) [ISOLATED]
                             ├─► VLAN 30: Storage (192.168.30.0/24) [ISOLATED]
                             ├─► VLAN 40: Services (192.168.40.0/24)
-                            └─► VLAN 50: Neighbor (192.168.50.0/24) [ISOLATED]
+                            ├─► VLAN 50: Neighbor (192.168.50.0/24) [ISOLATED]
+                            └─► VLAN 60: IoT (192.168.60.0/24) [PARTIAL ISOLATION]
 ```
 
 ## 🔢 VLAN Configuration
@@ -32,6 +33,23 @@ INTERNET
 | 30 | Storage | 192.168.30.0/24 | None | None | None | Ceph traffic | Full |
 | 40 | Services | 192.168.40.0/24 | 192.168.40.1 | None | 192.168.40.53 | Containers/VMs | None |
 | 50 | Neighbor | 192.168.50.0/24 | 192.168.50.1 | .100-.200 | 192.168.40.53 | Guest WiFi | Full |
+| 60 | IoT | 192.168.60.0/24 | 192.168.60.1 | .100-.200 | 192.168.40.53 | Smart devices | Partial |
+
+## 📡 WiFi Networks
+
+| SSID | VLAN | Network | Security | Broadcast APs | Purpose |
+|------|------|---------|----------|---------------|---------|
+| HomeNet | 40 | 192.168.40.0/24 | WPA2 | AP-Upstairs, AP-Downstairs | Trusted devices |
+| IoT | 60 | 192.168.60.0/24 | WPA2 | AP-Upstairs, AP-Downstairs | Smart home devices |
+| Neighbor | 50 | 192.168.50.0/24 | WPA2 | AP-Neighbor | Neighbor internet only |
+
+### Access Points
+
+| Name | IP | Switch Port | Location | SSIDs |
+|------|-----|-------------|----------|-------|
+| AP-Upstairs | 192.168.1.145 | Port 1 | Office/Upstairs | HomeNet, IoT |
+| AP-Downstairs | 192.168.1.146 | Port 2 | Downstairs | HomeNet, IoT |
+| AP-Neighbor | 192.168.1.147 | Port 4 | Neighbor Garage | Neighbor |
 
 ## 📍 Complete IP Address Registry
 
@@ -74,11 +92,24 @@ INTERNET
 | .31 | Nextcloud | CT104 | cloud.homelab.local | 80 | ✅ Running |
 | .32 | MariaDB | CT105 | mariadb | 3306 | ✅ Running |
 | .33 | Redis | CT106 | redis | 6379 | ⚠️ Container only |
+| .40 | UniFi Controller | CT107 | unifi.homelab.local | 8443,8080 | ✅ Running |
 | .53 | Pi-hole | CT101 | pihole.homelab.local | 53,80 | ✅ Running |
 | .61 | n8n | CT112 | automation.homelab.local | 5678 | ✅ Running |
-| .105 | Ubuntu Laptop | - | - | - | Static IP |
+| .100-200 | DHCP Pool | - | - | - | HomeNet WiFi clients |
 
-### IoT Network (10.1.1.0/24) - ISP Network
+### Neighbor VLAN (192.168.50.0/24) - ISOLATED
+| IP | Device | Purpose | Notes |
+|----|--------|---------|-------|
+| .1 | OPNsense | Gateway | Internet only |
+| .100-.200 | DHCP Pool | Neighbor WiFi clients | No internal access |
+
+### IoT VLAN (192.168.60.0/24) - PARTIAL ISOLATION
+| IP | Device | Purpose | Notes |
+|----|--------|---------|-------|
+| .1 | OPNsense | Gateway | Internet + DNS only |
+| .100-.200 | DHCP Pool | IoT WiFi clients | DNS to Pi-hole, internet allowed |
+
+### Legacy IoT Network (10.1.1.0/24) - ISP Network
 | IP | Device | Purpose | Integration |
 |----|--------|---------|-------------|
 | .1 | ISP Router | Gateway | NBN HFC |
@@ -110,7 +141,8 @@ Current configuration in `/etc/pihole/pihole.toml`:
 | status.homelab.local | 192.168.40.22 | A Record | ✅ Correct |
 | cloud.homelab.local | 192.168.40.22 | A Record | ✅ Correct |
 | automation.homelab.local | 192.168.40.22 | A Record | ✅ Correct |
-| pihole.homelab.local | 192.168.40.53 | A Record | ❌ Wrong - should be .22 |
+| pihole.homelab.local | 192.168.40.22 | A Record | ✅ Correct |
+| unifi.homelab.local | 192.168.40.40 | A Record | ✅ Correct |
 
 **DNS Resolution Flow:**
 1. Client queries Pi-hole (192.168.40.53)
@@ -128,6 +160,7 @@ Current configuration in `/etc/pihole/pihole.toml`:
 | 192.168.30.0/24 | * | VLAN30 | Direct |
 | 192.168.40.0/24 | * | VLAN40 | Direct |
 | 192.168.50.0/24 | * | VLAN50 | Direct |
+| 192.168.60.0/24 | * | VLAN60 | Direct |
 
 ## 🔥 Firewall Rules Matrix
 
@@ -138,42 +171,55 @@ Current configuration in `/etc/pihole/pihole.toml`:
 | Storage (30) | Own VLAN only | All others, Internet |
 | Services (40) | Internet, DNS | Corosync, Storage |
 | Neighbor (50) | Internet only | All internal VLANs |
+| IoT (60) | Internet, Pi-hole DNS only | All internal VLANs |
+
+### IoT VLAN Firewall Rules (Firewall → Rules → IoT)
+| Order | Action | Protocol | Source | Destination | Port | Description |
+|-------|--------|----------|--------|-------------|------|-------------|
+| 1 | Pass | TCP/UDP | IoT net | 192.168.40.53/32 | 53 | Allow DNS to Pi-hole |
+| 2 | Block | Any | IoT net | 192.168.0.0/16 | * | Block access to internal networks |
+| 3 | Pass | Any | IoT net | Any | * | Allow internet access |
+
+**Rule order is critical** - DNS must be allowed before the block rule.
 
 ### Special Rules
 - All VLANs can access Pi-hole DNS (192.168.40.53:53)
 - NAT enabled for Internet access from internal VLANs
 - Corosync and Storage VLANs completely isolated
+- IoT VLAN can only reach Pi-hole on port 53, blocked from all other internal
 
 ## 🔌 Switch Port Assignments
 
 | Port | Device | VLAN Config | PoE | Status |
 |------|--------|-------------|-----|--------|
-| 1 | Empty | - | Yes | Available |
-| 2 | Empty | - | Yes | Available |
-| 3 | OPNsense | Trunk (ALL) | No | Active |
-| 4 | Empty | - | Yes | Available |
+| 1 | AP-Upstairs | Trunk (All) | Yes | ✅ Active |
+| 2 | AP-Downstairs | Trunk (All) | Yes | ✅ Active |
+| 3 | OPNsense | Custom (10,20,30,40,50,60) | No | ✅ Active |
+| 4 | AP-Neighbor | Trunk (All) | Yes | ✅ Active |
 | 5 | Empty | - | No | Available |
 | 6 | Empty | - | Yes | Available |
 | 7-8 | Reserved | - | Yes | Future |
-| 9 | Ubuntu Laptop | Access (1) | No | Active |
-| 10 | pve1 | Trunk (1,10,20,30,40) | No | Active |
+| 9 | Ubuntu Laptop | Access (1) | No | ✅ Active |
+| 10 | pve1 | Trunk (1,10,20,30,40) | No | ✅ Active |
 | 11 | Empty | - | Yes | Available |
-| 12 | pve2 | Trunk (1,10,20,30,40) | No | Active |
-| 13 | Pi (IoT) | Access (1) | Yes | Active |
-| 14 | pve3 | Trunk (1,10,20,30,40) | No | Active |
-| 15 | Mac Pro NAS | Access (30) | No | Active |
+| 12 | pve2 | Trunk (1,10,20,30,40) | No | ✅ Active |
+| 13 | Pi (IoT) | Access (1) | Yes | ✅ Active |
+| 14 | pve3 | Trunk (1,10,20,30,40) | No | ✅ Active |
+| 15 | Mac Pro NAS | Access (30) | No | ✅ Active |
 | 16 | Empty | - | Yes | Available |
 
-**PoE Budget:** 45W total, 5W used, 40W available
+**PoE Budget:** 45W total, ~35W used (3 APs + Pi), 10W available
+
+**Critical Note:** Port 3 (OPNsense) must use **Custom** tagged VLAN selection, not "Allow All". When creating new VLANs, manually add them to Port 3's tagged list and restart the switch.
 
 ## 🌍 External Access
 
 ### Tailscale VPN Configuration
 | Device | Tailscale IP | Advertised Routes | Status |
 |--------|--------------|-------------------|--------|
-| Gateway (CT100) | 100.89.200.114 | 192.168.10.0/24, 192.168.40.0/24, 10.1.1.0/24 | Active |
-| Laptop | 100.102.3.77 | None | Active |
-| Phone | 100.103.101.25 | None | Active |
+| Gateway (CT100) | 100.89.200.114 | 192.168.10.0/24, 192.168.40.0/24, 10.1.1.0/24 | ✅ Active |
+| Laptop | 100.102.3.77 | None | ✅ Active |
+| Phone | 100.103.101.25 | None | ✅ Active |
 
 ### Internet Connection
 - **Type:** NBN HFC (50/20 Mbps)
@@ -195,7 +241,8 @@ Current configuration in `/etc/pihole/pihole.toml`:
 - 20-29: Cluster-specific
 - 30-39: Storage
 - 40-49: Services
-- 50-99: Guest/Isolated
+- 50-59: Guest/Isolated
+- 60-69: IoT
 
 ## 🔧 Quick Network Diagnostics
 
@@ -203,6 +250,7 @@ Current configuration in `/etc/pihole/pihole.toml`:
 # Test connectivity
 ping -c 1 192.168.10.1    # Management gateway
 ping -c 1 192.168.40.53   # Pi-hole DNS
+ping -c 1 192.168.60.1    # IoT gateway
 
 # DNS tests
 nslookup google.com 192.168.40.53
@@ -216,13 +264,39 @@ ip addr show | grep vmbr0
 
 # View ARP table
 arp -a | grep 192.168
+
+# Check switch VLAN config (SSH to switch)
+ssh tao.wuwei@192.168.1.104
+swctrl vlan show id 3  # Verify OPNsense port has all VLANs
+
+# Check AP ebtables (if VLAN issues)
+ssh tao.wuwei@192.168.1.145
+ebtables -t broute -L
 ```
 
 ## 📝 Recent Network Changes
 
+- **2025-11-28:** Deployed UniFi WiFi infrastructure (3 APs, 3 SSIDs)
+- **2025-11-28:** Created VLAN 60 (IoT) with isolation firewall rules
+- **2025-11-28:** Fixed Port 3 to use Custom VLAN selection (not "Allow All")
+- **2025-11-28:** Upgraded UniFi Controller to 10.0.160
+- **2025-11-25:** Fixed Pi-hole DNS entries
 - **2025-11-24:** Discovered Pi-hole DNS misconfiguration
 - **2025-11-16:** Switch port reorganization for PoE
 - **2025-11-12:** All VLANs configured and operational
+
+## ⚠️ Known Issues & Workarounds
+
+### UniFi AP ebtables DROP rules
+- **Issue:** APs may add ebtables rules that block VLAN traffic
+- **Symptom:** WiFi connects but no DHCP/connectivity
+- **Fix:** SSH to AP and run `ebtables -t broute -F`
+- **Note:** Rules may return after AP restart
+
+### Switch "Allow All" doesn't include new VLANs
+- **Issue:** Creating a new VLAN doesn't automatically add it to ports set to "Allow All"
+- **Workaround:** Use Custom selection for Port 3 (OPNsense) and manually add all VLANs
+- **Verify:** SSH to switch and run `swctrl vlan show id 3`
 
 ---
 

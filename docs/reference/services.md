@@ -2,7 +2,7 @@
 
 Complete registry of all deployed services with access information and configurations.
 
-Last Updated: 2025-11-24  
+Last Updated: 2025-11-28  
 Status: ✅ Verified via system audit
 
 ## 📊 Service Overview
@@ -16,9 +16,10 @@ Status: ✅ Verified via system audit
 | 104 | Nextcloud | 32.0.1 | 192.168.40.31 | 80 | [cloud.homelab.local](http://cloud.homelab.local) | 2 | 4GB | 20GB | ✅ | ✅ Running |
 | 105 | MariaDB | 10.11 | 192.168.40.32 | 3306 | - | 2 | 2GB | 10GB | ✅ | ✅ Running |
 | 106 | Redis | 7.x | 192.168.40.33 | 6379 | - | 1 | 512MB | 5GB | ✅ | ⚠️ Container only |
+| 107 | UniFi Controller | 10.0.160 | 192.168.40.40 | 8443,8080 | [unifi.homelab.local](https://unifi.homelab.local) | 2 | 2GB | 16GB | ✅ | ✅ Running |
 | 112 | n8n | 1.63.4 | 192.168.40.61 | 5678 | [automation.homelab.local](http://automation.homelab.local) | 2 | 2GB | 20GB | ✅ | ✅ Running |
 
-**Total Resources Used:** 14 CPU cores, 12GB RAM, 94GB disk
+**Total Resources Used:** 16 CPU cores, 14GB RAM, 103GB disk
 
 ## 🌐 Service Access Matrix
 
@@ -26,7 +27,7 @@ Status: ✅ Verified via system audit
 
 | Service | Proxy URL | Backend | SSL | Auth | Notes |
 |---------|-----------|---------|-----|------|-------|
-| Pi-hole Admin | http://pihole.homelab.local | 192.168.40.53:80 | ❌ | Password | ⚠️ DNS fix needed |
+| Pi-hole Admin | http://pihole.homelab.local | 192.168.40.53:80 | ❌ | Password | Admin interface |
 | Nginx Proxy Manager | http://nginx.homelab.local | 192.168.40.22:81 | ❌ | Email/Password | Admin interface |
 | Uptime Kuma | http://status.homelab.local | 192.168.40.23:3001 | ❌ | Username/Password | Monitoring dashboard |
 | Nextcloud | http://cloud.homelab.local | 192.168.40.31:80 | ❌ | Username/Password | Cloud storage |
@@ -40,6 +41,7 @@ Status: ✅ Verified via system audit
 | NPM | http://192.168.40.22:81 | Admin panel | Proxy issues |
 | Uptime Kuma | http://192.168.40.23:3001 | Dashboard | Proxy down |
 | Nextcloud | http://192.168.40.31 | Web interface | Testing |
+| UniFi Controller | https://192.168.40.40:8443 | Network management | Always use direct |
 | n8n | http://192.168.40.61:5678 | Workflow editor | Debugging |
 
 ## 🔧 Service Configurations
@@ -67,7 +69,6 @@ Blocklists: ~130,000 domains
 Block Rate: ~25% average
 Local DNS: /etc/pihole/pihole.toml
 Status: ✅ Operational
-Issue: DNS entry points to service IP instead of proxy
 ```
 
 ### Nginx Proxy Manager (CT102)
@@ -138,6 +139,32 @@ Status: ⚠️ Container exists, service not running
 Plan: Reconfigure with Docker
 ```
 
+### UniFi Controller (CT107)
+```yaml
+Type: Network Management
+Container: Debian 12 LXC
+Version: 10.0.160
+Java: OpenJDK 17
+MongoDB: 4.4
+Ports:
+  - 8443: Web UI (HTTPS)
+  - 8080: Device Inform
+  - 3478: STUN
+  - 5514: Remote Syslog
+Managed Devices:
+  - 1x USW-Lite-16-PoE Switch
+  - 3x U6+ Access Points
+Networks:
+  - VMs (VLAN 40)
+  - Neighbor WiFi (VLAN 50)
+  - IoT (VLAN 60)
+SSIDs:
+  - HomeNet (VLAN 40)
+  - Neighbor (VLAN 50)
+  - IoT (VLAN 60)
+Status: ✅ Operational
+```
+
 ### n8n (CT112)
 ```yaml
 Type: Workflow Automation
@@ -186,6 +213,7 @@ graph TD
     DB[MariaDB] --> NC[Nextcloud]
     TS[Tailscale] --> REMOTE[Remote Access]
     UPK[Uptime Kuma] --> MON[Monitors All]
+    UNIFI[UniFi Controller] --> WIFI[WiFi & Switch]
 ```
 
 ### Critical Dependencies
@@ -193,13 +221,15 @@ graph TD
 2. **Nginx Proxy Manager** - All web services need proxy
 3. **MariaDB** - Nextcloud requires database
 4. **Tailscale** - Remote access gateway
+5. **UniFi Controller** - WiFi and switch management
 
 ### Start Order (After Boot)
 1. Network infrastructure (automatic)
 2. Pi-hole (DNS)
 3. MariaDB (Database)
 4. Nginx Proxy Manager
-5. All other services
+5. UniFi Controller
+6. All other services
 
 ## 🔐 Security Configuration
 
@@ -211,6 +241,7 @@ graph TD
 | NPM | Email/Password | ❌ | Changed from default |
 | Uptime Kuma | Username/Password | ❌ | Single user |
 | Nextcloud | Username/Password | ✅ Available | App passwords supported |
+| UniFi | Email/Password | ❌ | SSO available |
 | n8n | Email/Password | ❌ | Owner account |
 
 ### Network Security
@@ -219,6 +250,8 @@ graph TD
 - ✅ Access via Tailscale VPN only
 - ⚠️ SSL certificates not configured
 - ✅ Database restricted to Nextcloud IP
+- ✅ IoT VLAN isolated from internal networks
+- ✅ Neighbor VLAN isolated from all internal networks
 
 ## 📊 Performance Metrics
 
@@ -231,6 +264,7 @@ graph TD
 | Uptime Kuma | <2% | 100MB | Low | 1 Mbps |
 | Nextcloud | 5-20% | 300MB | Medium | Variable |
 | MariaDB | <3% | 150MB | Medium | Local |
+| UniFi | <5% | 500MB | Low | 2 Mbps |
 | n8n | <2% | 150MB | Low | Variable |
 
 ### Response Times
@@ -243,10 +277,10 @@ graph TD
 
 | Service | Issue | Impact | Workaround | Fix Plan |
 |---------|-------|--------|------------|----------|
-| Pi-hole | DNS entry wrong | Proxy URL fails | Use direct IP | Update DNS to proxy |
 | Redis | systemd namespace | Service won't start | None needed | Docker deployment |
 | Mac Pro | Not responding to ping | None | SSHFS works | Investigate network |
 | SSL | Not configured | No HTTPS | Use HTTP | Real domain needed |
+| UniFi AP ebtables | DROP rules may return | VLAN traffic blocked | Clear with `ebtables -t broute -F` | Monitor for fix |
 
 ## 📅 Maintenance Schedule
 
@@ -255,6 +289,7 @@ graph TD
 | All Containers | Daily 02:00 | Monthly | Daily script | Automated |
 | Docker Services | With container | Check monthly | Uptime Kuma | Manual update |
 | Databases | Daily with CT | Before major updates | Query test | Automated |
+| UniFi Controller | With container | Check monthly | UniFi dashboard | Manual update |
 
 ## 🔄 Service Management Commands
 
@@ -271,6 +306,9 @@ ssh root@192.168.10.11 "pct exec [CTID] -- journalctl -u [service] -n 50"
 
 # Docker logs
 ssh root@192.168.10.11 "pct exec [CTID] -- docker logs [container] --tail 50"
+
+# UniFi service
+ssh root@192.168.10.11 "pct exec 107 -- systemctl status unifi"
 ```
 
 ---
