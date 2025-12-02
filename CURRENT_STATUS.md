@@ -1,31 +1,31 @@
 # 📊 Current Homelab Status
 
-**Last Updated:** 2025-11-28  
+**Last Updated:** 2025-12-02  
 **Overall Health:** 🟢 Operational (2 minor issues)  
-**Uptime:** 33+ days  
-**Last Incident:** IoT VLAN troubleshooting resolved
+**Uptime:** Freshly restarted after rack migration  
+**Last Incident:** Rack migration completed successfully
 
 ## 🚦 Quick Status
 
 | Component | Status | Details |
 |-----------|--------|---------|
 | **Proxmox Cluster** | ✅ Healthy | 3 nodes, quorum established |
-| **Ceph Storage** | ✅ HEALTH_OK | 172GB available, 3x replication |
+| **Ceph Storage** | ✅ HEALTH_OK | 508GB available, 3x replication |
 | **Network** | ✅ Operational | All VLANs active, routing working |
 | **Containers** | ✅ 9/9 Running | All containers up (Redis service inactive) |
-| **Backups** | ✅ Automated | Daily 02:00 |
+| **Backups** | ✅ Automated | Daily 02:00, Mac Pro NAS mounted |
 | **Remote Access** | ✅ Active | Tailscale operational |
 | **DNS** | ✅ Working | Pi-hole operational |
-| **Mac Pro NAS** | ⚠️ Partial | SSHFS working, ping failing |
+| **Mac Pro NAS** | ✅ Operational | SSHFS mounted, Pegasus storage online |
 | **UniFi WiFi** | ✅ Operational | 3 APs, 3 SSIDs, controller on CT107 |
 
 ## 🔴 Active Issues
 
-### 1. Mac Pro Not Responding to Ping
-- **Impact:** None - SSHFS mounts working normally
-- **Cause:** Unknown - possibly network configuration
-- **Workaround:** Not needed - backups working
-- **Investigation:** Check network settings on Mac Pro
+### 1. Mac Pro Pegasus Auto-Mount
+- **Impact:** Low - requires manual intervention after cold boot
+- **Cause:** Boot timing - Thunderbolt device not ready when systemd runs
+- **Workaround:** Run `sudo /usr/local/bin/mount-pegasus.sh` after boot
+- **Status:** Service is enabled, but timing issue persists
 
 ### 2. Redis Service Not Running
 - **Impact:** None - Nextcloud works without cache
@@ -34,6 +34,16 @@
 - **Fix Plan:** Redeploy with Docker when needed
 
 ## 📈 Recent Changes
+
+### December 2, 2025 - Rack Migration
+- ✅ **Completed 16U rack installation**
+- ✅ Safely shut down all infrastructure
+- ✅ Physically relocated: Mac Pro, Pegasus, 3× HP Elite Mini, OPNsense, UniFi Switch
+- ✅ Reconnected all equipment
+- ✅ Verified Ceph HEALTH_OK after restart
+- ✅ Restored Mac Pro NAS mounts on all nodes
+- ⚠️ **Issue Found:** UniFi Switch Port 15 reset to Default VLAN - reconfigured to Storage (VLAN 30)
+- ⚠️ **Issue Found:** Mac Pro Pegasus didn't auto-mount - required manual mount script
 
 ### November 28, 2025
 - ✅ Deployed UniFi Controller (CT107) on Proxmox
@@ -78,7 +88,7 @@
 - [ ] Add UniFi Controller to Uptime Kuma monitoring
 - [ ] Migrate IoT devices to IoT SSID
 - [ ] Test neighbor WiFi with actual neighbor device
-- [ ] Investigate Mac Pro ping issue
+- [ ] Investigate Mac Pro Pegasus auto-mount timing
 
 ### Short Term (Next 2 Weeks)
 - [ ] Deploy Vaultwarden password manager
@@ -100,8 +110,8 @@
 ```
 CPU:     16/72 cores allocated (22%)
 RAM:     14/96 GB allocated (14.6%)
-Storage: 94/172 GB Ceph used (55%)
-Backup:  17/9100 GB used (0.2%)
+Storage: 7.6/515 GB Ceph used (1.5%)
+Backup:  31/9100 GB used (0.3%)
 Power:   ~185W / $40 AUD per month
 ```
 
@@ -173,13 +183,14 @@ When returning to this project:
 
 ## 🏆 Achievements
 
-- ✅ 33+ days uptime
+- ✅ Successfully completed rack migration
 - ✅ 100% backup success rate
 - ✅ Zero data loss incidents
 - ✅ Successful disaster recovery (Mac Pro)
 - ✅ 9 services deployed and operational
 - ✅ Complete WiFi infrastructure deployed
 - ✅ VLAN segmentation with security isolation
+- ✅ 16U rack installation complete
 
 ---
 

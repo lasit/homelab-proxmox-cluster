@@ -1,8 +1,8 @@
 # 🎓 Lessons Learned from Building a Proxmox Homelab
 
-**Last Updated:** 2025-11-25  
-**Project Duration:** 2 months (October - November 2025)  
-**Services Deployed:** 7 containers + infrastructure  
+**Last Updated:** 2025-12-02  
+**Project Duration:** 3 months (October - December 2025)  
+**Services Deployed:** 9 containers + infrastructure  
 **Mistakes Made:** Plenty (and documented!)
 
 ## 📚 Table of Contents
@@ -17,6 +17,7 @@
 8. [Time & Cost Reality](#time--cost-reality)
 9. [What I Wish I Knew Earlier](#what-i-wish-i-knew-earlier)
 10. [Mistakes That Taught Me Most](#mistakes-that-taught-me-most)
+11. [Hardware & Physical Operations](#hardware--physical-operations)
 
 ---
 
@@ -309,86 +310,85 @@ services:
 
 **Scenario:** Service not accessible  
 **Mistake:** Only checking from client side  
-**Learning:** Check service side simultaneously
+**Better:** Check server logs too
 
 ```bash
-# From client
-curl http://service.local
+# Client side
+curl -v http://service
 
-# From service
-curl http://localhost
-netstat -tlnp | grep :port
+# Server side
+journalctl -u service -f
+tail -f /var/log/service.log
 ```
 
-**Revelation:** Often service is fine, routing is broken
+**Lesson:** Problems can be at either end
 
-### 19. Logs Don't Lie (But They Hide)
+### 19. DNS Is Always Suspect
 
-**Log Locations I Always Forget:**
+**When Service Unreachable:**
+1. Ping by IP - works?
+2. Ping by hostname - fails?
+3. → DNS problem
+
+```bash
+# Quick DNS check
+nslookup hostname 192.168.40.53
+dig @192.168.40.53 hostname
+```
+
+**Times DNS Was The Issue:** 5+
+
+### 20. Logs Are Your Friends
+
+**Log Locations That Mattered:**
 
 | Service | Log Location |
-|---------|-------------|
-| Proxmox | /var/log/pve/tasks/ |
-| Container systemd | journalctl -xe |
-| Docker containers | docker logs container-name |
-| OPNsense | /var/log/system.log |
-| Application | Check documentation! |
+|---------|--------------|
+| Proxmox | /var/log/pve/ |
+| Containers | journalctl -u pve-container@CTID |
+| Docker | docker compose logs |
+| OPNsense | System → Log Files |
+| Pi-hole | /var/log/pihole/ |
 
-**Lesson:** `journalctl -f` is your friend
-
-### 20. When In Doubt, Restart in Order
-
-**The Recovery Sequence:**
-1. Network (but not router!)
-2. Storage mounts
-3. Databases
-4. Applications
-5. Frontend services
-
-**Never Restart Together:** Cluster nodes (lose quorum)
+**Lesson:** Know where logs live before you need them
 
 ---
 
 ## Documentation Value
 
-### 21. Documentation Debt Is Real
+### 21. Write It Down Immediately
 
-**Week 1:** "I'll remember this"  
-**Week 4:** "What does this IP do?"  
-**Week 8:** "How did I configure this?"
+**Pattern Observed:** Forget config details within 24 hours  
+**Solution:** Document while doing, not after
 
-**Documentation ROI:**
-- Mac Pro recovery: 30 min (had docs) vs 4 hours (would be guessing)
-- Service deployment: Copy-paste from docs
-- Troubleshooting: Check "Known Issues" first
+**Documentation Saved Me:**
+- Mac Pro recovery (had exact commands)
+- Service deployments (repeatable)
+- Network troubleshooting (known working state)
 
-**Lesson:** Document while doing, not after
+### 22. Screenshots Are Worth 1000 Words
 
-### 22. Screenshots Are Not Documentation
+**Captured:**
+- OPNsense firewall rules
+- UniFi VLAN settings
+- Proxmox resource allocation
+- Pi-hole DNS entries
 
-**Initial Approach:** Screenshot everything  
-**Problem:** Can't search, can't copy-paste, gets outdated  
-**Better Approach:** Commands and configuration as text
+**Value:** Visual reference when text isn't enough
 
-```bash
-# This is searchable, copyable, versionable
-pct create 100 local:vztmpl/debian-12-standard.tar.zst \
-  --hostname service \
-  --cores 2 \
-  --memory 2048
-```
+### 23. Git Everything
 
-### 23. Error Messages Are Gold
+**Version Controlled:**
+- All documentation (markdown)
+- Docker compose files
+- Configuration snippets
+- Scripts
 
-**Habit Developed:** Copy EXACT error messages
-
-**Example That Saved Hours:**
-```
-Error: EACCES: permission denied, open '/home/node/.n8n/config'
-```
-**Result:** Found others with same issue, solution was version pinning
-
-**Lesson:** Document errors verbatim, including context
+**Benefits:**
+- History of changes
+- Rollback capability
+- Off-site backup
+- Shareable
 
 ---
 
@@ -557,6 +557,138 @@ pihole.homelab.local → 192.168.40.53 (WRONG!)
 
 ---
 
+## Hardware & Physical Operations
+
+### 41. UniFi Switch Ports May Reset After Physical Changes
+
+**Event:** After rack migration, Mac Pro couldn't reach its gateway
+
+**Cause:** UniFi Switch Port 15 was reset from "Storage (30)" to "Default (1)"
+
+**Diagnosis Time:** 15 minutes (after starting UniFi Controller)
+
+**Prevention:**
+- Document all switch port assignments before physical changes
+- Verify port configs immediately after reconnecting
+- Keep UniFi Controller accessible (CT107) during migrations
+
+**Lesson:** Physical moves can cause logical resets - always verify switch config after hardware changes
+
+### 42. Start Infrastructure in Correct Order
+
+**Correct Startup Order:**
+1. Network switch (provides connectivity)
+2. Router (provides routing/DHCP)
+3. NAS storage (Pegasus first, then Mac Pro)
+4. Cluster nodes (pve1 → pve2 → pve3)
+5. Services (containers auto-start)
+
+**Why It Matters:**
+- Proxmox nodes need network to form cluster
+- Containers need DNS (Pi-hole) to function
+- SSHFS mounts need NAS online first
+
+**Lesson:** Infrastructure has dependencies - respect the boot order
+
+### 43. Thunderbolt Storage Boot Timing Is Fragile
+
+**Observed:** Mac Pro Pegasus auto-mount service didn't trigger on cold boot
+
+**Service Status:** Enabled (`systemctl is-enabled pegasus-mount.service`)
+
+**Root Cause:** Thunderbolt device initialization timing varies
+
+**Manual Workaround:**
+```bash
+sudo /usr/local/bin/mount-pegasus.sh
+```
+
+**Potential Fixes to Investigate:**
+- Add retry logic to mount script
+- Increase startup delay
+- Use udev rules for Thunderbolt device detection
+- Create timer-based retry service
+
+**Lesson:** External storage boot timing is inherently unreliable - build in manual verification step
+
+### 44. Keep ISP Network Available During Maintenance
+
+**Situation:** Laptop had dual routes (ISP and OPNsense)
+
+**Benefit:** Could still reach internet when homelab network was down
+
+**Downside:** Had to manually remove ISP route after startup
+
+**Command Used:**
+```bash
+sudo ip route del default via 10.1.1.1
+```
+
+**Lesson:** Dual-homed management workstation provides fallback during maintenance
+
+### 45. Rack Migration Checklist Is Essential
+
+**Created Checklist:**
+
+**Pre-Migration:**
+- [ ] Run daily-health.sh
+- [ ] Verify recent backup
+- [ ] Document switch port assignments
+- [ ] Note current container states
+- [ ] Configure DNS fallback on laptop
+
+**Shutdown Sequence:**
+- [ ] Stop SSHFS mounts on all nodes
+- [ ] Shutdown Mac Pro (storage unmounted)
+- [ ] Power off Pegasus array
+- [ ] Stop containers (reverse dependency order)
+- [ ] Set Ceph maintenance flags
+- [ ] Shutdown nodes (pve3 → pve2 → pve1)
+- [ ] Power off switch
+- [ ] Power off router
+
+**Startup Sequence:**
+- [ ] Power on switch (wait 60s)
+- [ ] Power on router (wait 2min)
+- [ ] Verify network connectivity
+- [ ] Power on Pegasus (wait 30s)
+- [ ] Power on Mac Pro (wait 3min)
+- [ ] Verify/run Pegasus mount script
+- [ ] Power on nodes (pve1 → pve2 → pve3)
+- [ ] Verify cluster quorum
+- [ ] Clear Ceph flags
+- [ ] Restart SSHFS mounts
+- [ ] Verify all containers running
+- [ ] Verify DNS working
+- [ ] Verify switch port configs
+
+**Lesson:** Complex operations need written checklists - memory fails under pressure
+
+### 46. Ceph Maintenance Flags Are Critical
+
+**Flags Used Before Shutdown:**
+```bash
+ceph osd set noout
+ceph osd set nobackfill
+ceph osd set norebalance
+```
+
+**Why They Matter:**
+- Prevents Ceph from marking OSDs as "out" during shutdown
+- Prevents unnecessary data movement
+- Allows clean recovery after restart
+
+**Must Clear After Startup:**
+```bash
+ceph osd unset noout
+ceph osd unset nobackfill
+ceph osd unset norebalance
+```
+
+**Lesson:** Ceph is smart but needs hints about planned maintenance
+
+---
+
 ## Technical Patterns Recognized
 
 ### Infrastructure Patterns
@@ -605,10 +737,11 @@ tcpdump if needed
 ### What Success Looks Like
 
 **Technical Success:**
-- 7 services running reliably
+- 9 services running reliably
 - Survived multiple power events
 - Complete recovery from Mac Pro failure
 - Zero data loss incidents
+- Successful rack migration
 
 **Learning Success:**
 - Can explain every configuration decision
@@ -638,6 +771,10 @@ tcpdump if needed
 8. **Separate concerns** - One service per container
 9. **Learn the basics** - Understand networking before SDN
 10. **Enjoy the journey** - It's a homelab, not production
+11. **Create shutdown/startup checklists** - Document the order before you need it
+12. **Verify switch configs after physical changes** - Don't assume they persist
+13. **External storage needs manual verification** - Boot timing is unreliable
+14. **Keep fallback network access** - Dual-homed workstation saves time
 
 ### Red Flags to Avoid
 
@@ -649,6 +786,8 @@ tcpdump if needed
 - "I'll just put everything in one VM"
 - "We don't need monitoring"
 - "I know what this IP does"
+- "The switch config will survive the move"
+- "Auto-mount always works"
 
 ### Green Flags to Pursue
 
@@ -660,6 +799,8 @@ tcpdump if needed
 - "How can this be isolated?"
 - "What metrics should we track?"
 - "Future me will thank current me"
+- "Let me verify the switch config"
+- "I'll check the storage mount after boot"
 
 ---
 
@@ -686,7 +827,7 @@ tcpdump if needed
 
 ## Final Thoughts
 
-After 2 months and countless hours, the homelab is more than infrastructure - it's a learning platform that pays dividends in knowledge. Every failure taught resilience, every success built confidence, and every documentation entry saved future pain.
+After 3 months and countless hours, the homelab is more than infrastructure - it's a learning platform that pays dividends in knowledge. Every failure taught resilience, every success built confidence, and every documentation entry saved future pain.
 
 **Would I do it again?** Absolutely.  
 **Would I do it the same way?** Not a chance.  
