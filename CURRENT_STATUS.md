@@ -31,6 +31,7 @@
 | **Est. Runtime** | ~34-45 minutes |
 | **NUT Master** | pve1 (USB connected) |
 | **NUT Slaves** | pve2, pve3, Mac Pro |
+| **Uptime Kuma** | Push monitor (every 60s) |
 
 ### Protected Equipment
 - ✅ pve1, pve2, pve3 (NUT monitored)
@@ -67,6 +68,8 @@ ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.lo
 - ✅ Configured NUT client on Mac Pro via Storage VLAN
 - ✅ Created cluster-aware shutdown script for Ceph protection
 - ✅ Verified all systems can monitor UPS status
+- ✅ Added UPS Push monitor to Uptime Kuma
+- ✅ Created ups-monitor-push.sh script with cron job
 - ✅ Documented complete UPS configuration
 
 ### December 2, 2025 - Rack Migration
@@ -101,8 +104,8 @@ ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.lo
 ## 🎯 Next Actions
 
 ### Immediate (This Week)
-- [ ] Add UPS monitoring to Uptime Kuma
-- [ ] Add UPS check to daily-health.sh script
+- [x] Add UPS monitoring to Uptime Kuma
+- [x] Add UPS check to daily-health.sh script
 - [ ] Test UPS notifications (simulate power event)
 - [ ] Migrate IoT devices to IoT SSID
 
@@ -136,7 +139,7 @@ UPS:     17% load, ~34 min runtime
 Running:     9/9 containers
 Auto-start:  9/9 enabled
 Backed up:   8/9 (includes non-operational Redis)
-Monitored:   4/9 via Uptime Kuma (add UniFi, UPS)
+Monitored:   5/9 via Uptime Kuma (including UPS)
 ```
 
 ## 🖥️ Container Inventory
@@ -202,6 +205,7 @@ When returning to this project:
 ## 🏆 Achievements
 
 - ✅ UPS protection fully configured
+- ✅ UPS monitoring in Uptime Kuma
 - ✅ Successfully completed rack migration
 - ✅ 100% backup success rate
 - ✅ Zero data loss incidents

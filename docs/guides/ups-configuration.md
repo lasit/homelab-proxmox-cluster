@@ -16,6 +16,7 @@
 7. [Testing Procedures](#testing-procedures)
 8. [Troubleshooting](#troubleshooting)
 9. [Maintenance](#maintenance)
+10. [Uptime Kuma Integration](#uptime-kuma-integration)
 
 ---
 
@@ -534,6 +535,160 @@ tar -czf /root/nut-config-backup.tar.gz /etc/nut/ /usr/local/bin/cluster-shutdow
 
 ---
 
+## Uptime Kuma Integration
+
+### Overview
+
+UPS status is monitored via Uptime Kuma using a Push monitor. A script on pve1 runs every minute and pushes UPS health data to Uptime Kuma.
+
+### Architecture
+
+```
+pve1 (cron every minute)
+    │
+    ▼
+/usr/local/bin/ups-monitor-push.sh
+    │
+    ├── Reads UPS data via upsc
+    ├── Determines health status
+    │
+    ▼
+HTTP Push to Uptime Kuma
+http://192.168.40.23:3001/api/push/ZMQELu5DML
+```
+
+### Monitor Configuration
+
+**Uptime Kuma Settings:**
+- **Monitor Type:** Push
+- **Friendly Name:** UPS - CyberPower
+- **Heartbeat Interval:** 60 seconds
+- **Retries:** 3
+
+### Push Script
+
+**Location:** `/usr/local/bin/ups-monitor-push.sh` (on pve1)
+
+```bash
+#!/bin/bash
+# UPS Monitor Push Script for Uptime Kuma
+# Pushes UPS health status every minute
+
+PUSH_URL="http://192.168.40.23:3001/api/push/ZMQELu5DML"
+UPS_NAME="cyberpower@localhost"
+
+# Get UPS data
+UPS_STATUS=$(upsc $UPS_NAME ups.status 2>/dev/null)
+BATTERY=$(upsc $UPS_NAME battery.charge 2>/dev/null)
+LOAD=$(upsc $UPS_NAME ups.load 2>/dev/null)
+RUNTIME=$(upsc $UPS_NAME battery.runtime 2>/dev/null)
+
+# Calculate runtime in minutes
+if [ ! -z "$RUNTIME" ]; then
+    RUNTIME_MIN=$((RUNTIME / 60))
+else
+    RUNTIME_MIN="0"
+fi
+
+# Determine health status
+if [ -z "$UPS_STATUS" ]; then
+    STATUS="down"
+    MSG="UPS not responding"
+elif [[ "$UPS_STATUS" == *"OB"* ]]; then
+    STATUS="up"
+    MSG="ON_BATTERY-${BATTERY}pct-${RUNTIME_MIN}min-${LOAD}pct_load"
+elif [[ "$UPS_STATUS" == "OL"* ]] && [ "$BATTERY" -ge 50 ]; then
+    STATUS="up"
+    MSG="Online-Batt_${BATTERY}pct-Load_${LOAD}pct-Runtime_${RUNTIME_MIN}min"
+elif [[ "$UPS_STATUS" == "OL"* ]] && [ "$BATTERY" -lt 50 ]; then
+    STATUS="up"
+    MSG="Online-LOW_BATT_${BATTERY}pct-Load_${LOAD}pct"
+else
+    STATUS="up"
+    MSG="Status_${UPS_STATUS}-Batt_${BATTERY}pct-Load_${LOAD}pct"
+fi
+
+# Push to Uptime Kuma (URL-encode by using --data-urlencode)
+curl -s -G "$PUSH_URL" --data-urlencode "status=$STATUS" --data-urlencode "msg=$MSG" --data-urlencode "ping=$LOAD" > /dev/null 2>&1
+```
+
+### Cron Job
+
+**Location:** `/etc/cron.d/ups-monitor` (on pve1)
+
+```bash
+* * * * * root /usr/local/bin/ups-monitor-push.sh
+```
+
+### What Gets Monitored
+
+| Field | Value | Notes |
+|-------|-------|-------|
+| Status | up/down | Based on UPS reachability and status |
+| Message | Status string | Shows battery %, load %, runtime |
+| Ping | Load % | Displayed as "response time" graph |
+
+### Status Messages
+
+| UPS State | Message Format |
+|-----------|----------------|
+| Online, healthy | `Online-Batt_100pct-Load_17pct-Runtime_40min` |
+| Online, low battery | `Online-LOW_BATT_30pct-Load_17pct` |
+| On battery | `ON_BATTERY-85pct-30min-17pct_load` |
+| Unreachable | `UPS not responding` |
+
+### Troubleshooting Uptime Kuma Integration
+
+**Monitor shows "Pending" or no data:**
+```bash
+# Test push manually from pve1
+curl -v "http://192.168.40.23:3001/api/push/ZMQELu5DML?status=up&msg=test&ping=1"
+
+# Should return: {"ok":true}
+```
+
+**Script not running:**
+```bash
+# Check cron job exists
+cat /etc/cron.d/ups-monitor
+
+# Run script manually with debug
+bash -x /usr/local/bin/ups-monitor-push.sh
+```
+
+**URL encoding issues:**
+The script uses `curl -G --data-urlencode` to properly encode special characters in the message. If messages contain spaces or special characters, they must be URL-encoded.
+
+### Recreation Steps
+
+If you need to recreate this setup:
+
+1. **Create Push Monitor in Uptime Kuma:**
+   - Add New Monitor → Type: Push
+   - Name: "UPS - CyberPower"
+   - Heartbeat: 60 seconds
+   - Copy the Push URL
+
+2. **Create script on pve1:**
+   ```bash
+   # Update PUSH_URL with your actual URL
+   nano /usr/local/bin/ups-monitor-push.sh
+   chmod +x /usr/local/bin/ups-monitor-push.sh
+   ```
+
+3. **Test the script:**
+   ```bash
+   /usr/local/bin/ups-monitor-push.sh
+   # Check Uptime Kuma - should show green
+   ```
+
+4. **Add cron job:**
+   ```bash
+   echo "* * * * * root /usr/local/bin/ups-monitor-push.sh" > /etc/cron.d/ups-monitor
+   ```
+
+---
+
 ## Quick Reference Card
 
 ### Key Files
@@ -546,6 +701,8 @@ tar -czf /root/nut-config-backup.tar.gz /etc/nut/ /usr/local/bin/cluster-shutdow
 | upsd.users | /etc/nut/ | Authentication |
 | upsmon.conf | /etc/nut/ | Monitor config |
 | cluster-shutdown.sh | /usr/local/bin/ | Graceful shutdown (pve1) |
+| ups-monitor-push.sh | /usr/local/bin/ | Uptime Kuma push script (pve1) |
+| ups-monitor | /etc/cron.d/ | Cron job for push script (pve1) |
 
 ### Key Services
 
