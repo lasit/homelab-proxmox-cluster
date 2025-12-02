@@ -2,8 +2,8 @@
 
 # Daily Health Check Script for Proxmox Homelab
 # Run this each morning to verify all systems operational
-# Version: 1.0
-# Last Updated: 2025-11-25
+# Version: 1.1
+# Last Updated: 2025-12-02
 
 # Color codes for output
 RED='\033[0;31m'
@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 MANAGEMENT_IPS="192.168.10.11 192.168.10.12 192.168.10.13"
-SERVICE_CONTAINERS="100 101 102 103 104 105 112"
+SERVICE_CONTAINERS="100 101 102 103 104 105 107 112"
 CRITICAL_SERVICES=(
     "192.168.40.10:Tailscale"
     "192.168.40.53:Pi-hole"
@@ -22,10 +22,17 @@ CRITICAL_SERVICES=(
     "192.168.40.23:Uptime-Kuma"
     "192.168.40.31:Nextcloud"
     "192.168.40.32:MariaDB"
+    "192.168.40.40:UniFi-Controller"
     "192.168.40.61:n8n"
 )
 MAC_PRO_IP="192.168.30.20"
 BACKUP_DIR="/mnt/macpro/proxmox-backups/dump"
+
+# UPS Configuration
+UPS_NAME="cyberpower"
+UPS_HOST="localhost"
+UPS_LOW_BATTERY_WARN=30
+UPS_HIGH_LOAD_WARN=80
 
 # Counters
 TOTAL_CHECKS=0
@@ -71,7 +78,119 @@ clear
 print_header
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 1: Network Infrastructure
+# SECTION 1: UPS Status (Check First - Most Critical)
+# ═══════════════════════════════════════════════════════════════
+section_header "UPS Power Protection"
+
+# Check UPS status from pve1
+echo -n "UPS Connection: "
+UPS_DATA=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@192.168.10.11 "upsc $UPS_NAME@$UPS_HOST 2>/dev/null" 2>/dev/null)
+
+if [ ! -z "$UPS_DATA" ]; then
+    check_pass "Connected to NUT server"
+    
+    # Parse UPS values
+    UPS_STATUS=$(echo "$UPS_DATA" | grep "^ups.status:" | cut -d' ' -f2)
+    UPS_LOAD=$(echo "$UPS_DATA" | grep "^ups.load:" | cut -d' ' -f2)
+    UPS_CHARGE=$(echo "$UPS_DATA" | grep "^battery.charge:" | cut -d' ' -f2)
+    UPS_RUNTIME=$(echo "$UPS_DATA" | grep "^battery.runtime:" | cut -d' ' -f2)
+    UPS_INPUT=$(echo "$UPS_DATA" | grep "^input.voltage:" | cut -d' ' -f2)
+    
+    # Convert runtime to minutes
+    if [ ! -z "$UPS_RUNTIME" ]; then
+        UPS_RUNTIME_MIN=$((UPS_RUNTIME / 60))
+    else
+        UPS_RUNTIME_MIN="?"
+    fi
+    
+    # Check UPS status
+    echo -n "UPS Status: "
+    case "$UPS_STATUS" in
+        OL)
+            check_pass "Online (Mains Power)"
+            ;;
+        OB)
+            check_fail "ON BATTERY - Power failure!"
+            ;;
+        OL\ CHRG|"OL CHRG")
+            check_pass "Online, Charging"
+            ;;
+        OB\ DISCHRG|"OB DISCHRG")
+            check_fail "ON BATTERY, Discharging!"
+            ;;
+        *)
+            check_warn "Status: $UPS_STATUS"
+            ;;
+    esac
+    
+    # Check battery charge
+    echo -n "Battery Charge: "
+    if [ ! -z "$UPS_CHARGE" ]; then
+        if [ "$UPS_CHARGE" -ge 90 ]; then
+            check_pass "${UPS_CHARGE}%"
+        elif [ "$UPS_CHARGE" -ge "$UPS_LOW_BATTERY_WARN" ]; then
+            check_warn "${UPS_CHARGE}% - Not fully charged"
+        else
+            check_fail "${UPS_CHARGE}% - LOW BATTERY!"
+        fi
+    else
+        check_warn "Unable to read battery charge"
+    fi
+    
+    # Check load
+    echo -n "UPS Load: "
+    if [ ! -z "$UPS_LOAD" ]; then
+        if [ "$UPS_LOAD" -lt "$UPS_HIGH_LOAD_WARN" ]; then
+            check_pass "${UPS_LOAD}% (~${UPS_RUNTIME_MIN} min runtime)"
+        else
+            check_warn "${UPS_LOAD}% - High load! (~${UPS_RUNTIME_MIN} min runtime)"
+        fi
+    else
+        check_warn "Unable to read UPS load"
+    fi
+    
+    # Check input voltage
+    echo -n "Input Voltage: "
+    if [ ! -z "$UPS_INPUT" ]; then
+        # Check if voltage is in acceptable range (200-250V for AU)
+        INPUT_INT=${UPS_INPUT%.*}
+        if [ "$INPUT_INT" -ge 200 ] && [ "$INPUT_INT" -le 250 ]; then
+            check_pass "${UPS_INPUT}V"
+        else
+            check_warn "${UPS_INPUT}V - Outside normal range"
+        fi
+    else
+        check_warn "Unable to read input voltage"
+    fi
+    
+else
+    check_fail "Cannot connect to UPS - NUT not responding!"
+fi
+
+# Check NUT services on all nodes
+echo -n "NUT Monitor (pve1): "
+if ssh -o ConnectTimeout=3 -o BatchMode=yes root@192.168.10.11 "systemctl is-active nut-monitor >/dev/null 2>&1" 2>/dev/null; then
+    check_pass "Running"
+else
+    check_fail "Not running!"
+fi
+
+echo -n "NUT Monitor (pve2): "
+if ssh -o ConnectTimeout=3 -o BatchMode=yes root@192.168.10.12 "systemctl is-active nut-monitor >/dev/null 2>&1" 2>/dev/null; then
+    check_pass "Running"
+else
+    check_warn "Not running"
+fi
+
+echo -n "NUT Monitor (pve3): "
+if ssh -o ConnectTimeout=3 -o BatchMode=yes root@192.168.10.13 "systemctl is-active nut-monitor >/dev/null 2>&1" 2>/dev/null; then
+    check_pass "Running"
+else
+    check_warn "Not running"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 2: Network Infrastructure
 # ═══════════════════════════════════════════════════════════════
 section_header "Network Infrastructure"
 
@@ -105,7 +224,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 2: Proxmox Cluster
+# SECTION 3: Proxmox Cluster
 # ═══════════════════════════════════════════════════════════════
 section_header "Proxmox Cluster Status"
 
@@ -162,7 +281,7 @@ if [ "$QUORUM_OK" = true ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 3: Service Containers
+# SECTION 4: Service Containers
 # ═══════════════════════════════════════════════════════════════
 section_header "Service Containers"
 
@@ -183,6 +302,7 @@ for node_ip in $MANAGEMENT_IPS; do
                 103) SERVICE_NAME="Uptime-Kuma" ;;
                 104) SERVICE_NAME="Nextcloud" ;;
                 105) SERVICE_NAME="MariaDB" ;;
+                107) SERVICE_NAME="UniFi-Controller" ;;
                 112) SERVICE_NAME="n8n" ;;
                 *) SERVICE_NAME="Unknown" ;;
             esac
@@ -203,7 +323,7 @@ for node_ip in $MANAGEMENT_IPS; do
 done
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 4: Service Availability
+# SECTION 5: Service Availability
 # ═══════════════════════════════════════════════════════════════
 section_header "Service Accessibility"
 
@@ -215,17 +335,18 @@ for service in "${CRITICAL_SERVICES[@]}"; do
     if ping -c 1 -W 1 $ip &>/dev/null; then
         # Then try HTTP if it's a web service
         case "$name" in
-            Pi-hole|Nginx-Proxy|Uptime-Kuma|Nextcloud|n8n)
+            Pi-hole|Nginx-Proxy|Uptime-Kuma|Nextcloud|n8n|UniFi-Controller)
                 # Get appropriate port
                 case "$name" in
                     Pi-hole) PORT=80; URL="http://$ip/admin/" ;;
                     Nginx-Proxy) PORT=81; URL="http://$ip:81" ;;
                     Uptime-Kuma) PORT=3001; URL="http://$ip:3001" ;;
                     Nextcloud) PORT=80; URL="http://$ip" ;;
+                    UniFi-Controller) PORT=8443; URL="https://$ip:8443" ;;
                     n8n) PORT=5678; URL="http://$ip:5678" ;;
                 esac
                 
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$URL" 2>/dev/null)
+                HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "$URL" 2>/dev/null)
                 
                 if [[ "$HTTP_CODE" == "200" ]] || [[ "$HTTP_CODE" == "302" ]] || [[ "$HTTP_CODE" == "403" ]]; then
                     check_pass "Responding (HTTP $HTTP_CODE)"
@@ -243,20 +364,20 @@ for service in "${CRITICAL_SERVICES[@]}"; do
 done
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 5: Storage & Backup
+# SECTION 6: Storage & Backup
 # ═══════════════════════════════════════════════════════════════
 section_header "Storage & Backup"
 
 # Check Mac Pro NAS
 echo -n "Mac Pro NAS ($MAC_PRO_IP): "
 if ping -c 1 -W 1 $MAC_PRO_IP &>/dev/null; then
-    check_warn "Ping OK (usually doesn't respond)"
+    check_pass "Responding"
 else
     # Check if mount exists on any node
     MOUNT_OK=false
     for node_ip in $MANAGEMENT_IPS; do
         if ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "df -h | grep -q macpro" 2>/dev/null; then
-            check_pass "Mount verified on $(echo $node_ip | cut -d. -f4)"
+            check_pass "Mount verified on pve$(($(echo $node_ip | cut -d. -f4)-10))"
             MOUNT_OK=true
             break
         fi
@@ -264,6 +385,14 @@ else
     if [ "$MOUNT_OK" = false ]; then
         check_fail "Not mounted on any node"
     fi
+fi
+
+# Check Mac Pro NUT client
+echo -n "Mac Pro NUT Monitor: "
+if ssh -o ConnectTimeout=3 -o BatchMode=yes xavier@$MAC_PRO_IP "systemctl is-active nut-monitor 2>/dev/null" 2>/dev/null | grep -q "active"; then
+    check_pass "Running"
+else
+    check_warn "Not verified (may not respond to ping)"
 fi
 
 # Check backup recency
@@ -306,7 +435,7 @@ for node_ip in $MANAGEMENT_IPS; do
 done
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 6: Remote Access
+# SECTION 7: Remote Access
 # ═══════════════════════════════════════════════════════════════
 section_header "Remote Access"
 
@@ -325,7 +454,7 @@ for node_ip in $MANAGEMENT_IPS; do
 done
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 7: Quick Performance Metrics
+# SECTION 8: Quick Performance Metrics
 # ═══════════════════════════════════════════════════════════════
 section_header "Performance Metrics"
 
@@ -382,6 +511,12 @@ echo -e "Failed:          ${RED}$FAILED_CHECKS${NC}"
 echo "Health Score:    ${HEALTH_SCORE}%"
 echo ""
 
+# UPS Summary Line
+if [ ! -z "$UPS_STATUS" ] && [ ! -z "$UPS_CHARGE" ] && [ ! -z "$UPS_LOAD" ]; then
+    echo -e "${BLUE}▶ UPS Summary:${NC} Status: $UPS_STATUS | Battery: ${UPS_CHARGE}% | Load: ${UPS_LOAD}% | Runtime: ~${UPS_RUNTIME_MIN} min"
+    echo ""
+fi
+
 # Recommendations
 if [ $FAILED_CHECKS -gt 0 ] || [ $WARNINGS -gt 0 ]; then
     echo -e "${BLUE}▶ Recommendations:${NC}"
@@ -399,6 +534,7 @@ if [ $FAILED_CHECKS -gt 0 ] || [ $WARNINGS -gt 0 ]; then
     fi
 else
     echo -e "${GREEN}  ✓ All systems operational!${NC}"
+    echo -e "${GREEN}  ✓ UPS protection active${NC}"
     echo -e "${GREEN}  ✓ No action required${NC}"
 fi
 

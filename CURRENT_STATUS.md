@@ -1,7 +1,7 @@
 # 📊 Current Homelab Status
 
 **Last Updated:** 2025-12-02  
-**Overall Health:** 🟢 Operational (2 minor issues)  
+**Overall Health:** 🟢 Operational  
 **Uptime:** Freshly restarted after rack migration  
 **Last Incident:** Rack migration completed successfully
 
@@ -18,6 +18,30 @@
 | **DNS** | ✅ Working | Pi-hole operational |
 | **Mac Pro NAS** | ✅ Operational | SSHFS mounted, Pegasus storage online |
 | **UniFi WiFi** | ✅ Operational | 3 APs, 3 SSIDs, controller on CT107 |
+| **UPS** | ✅ Protected | CyberPower 1600VA, 17% load, all systems monitored |
+
+## 🔋 UPS Status
+
+| Metric | Value |
+|--------|-------|
+| **Model** | CyberPower CP1600EPFCLCD-AU |
+| **Status** | OL (Online - Mains Power) |
+| **Load** | ~17% (~142W) |
+| **Battery** | 100% |
+| **Est. Runtime** | ~34-45 minutes |
+| **NUT Master** | pve1 (USB connected) |
+| **NUT Slaves** | pve2, pve3, Mac Pro |
+
+### Protected Equipment
+- ✅ pve1, pve2, pve3 (NUT monitored)
+- ✅ OPNsense router
+- ✅ UniFi Switch
+- ✅ Mac Pro + Pegasus (NUT monitored)
+
+### Quick UPS Check
+```bash
+ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.load|battery.charge|battery.runtime):'"
+```
 
 ## 🔴 Active Issues
 
@@ -34,6 +58,16 @@
 - **Fix Plan:** Redeploy with Docker when needed
 
 ## 📈 Recent Changes
+
+### December 2, 2025 - UPS Installation
+- ✅ **Installed CyberPower CP1600EPFCLCD-AU UPS**
+- ✅ Connected all rack equipment to UPS battery backup
+- ✅ Configured NUT server on pve1 (netserver mode)
+- ✅ Configured NUT clients on pve2, pve3 (netclient mode)
+- ✅ Configured NUT client on Mac Pro via Storage VLAN
+- ✅ Created cluster-aware shutdown script for Ceph protection
+- ✅ Verified all systems can monitor UPS status
+- ✅ Documented complete UPS configuration
 
 ### December 2, 2025 - Rack Migration
 - ✅ **Completed 16U rack installation**
@@ -53,56 +87,37 @@
 - ✅ Created VLAN 60 (IoT) in OPNsense
 - ✅ Configured IoT firewall rules (DNS allow, internal block, internet allow)
 - ✅ Updated UniFi Controller from 9.5.21 to 10.0.160
-- ✅ Disabled old UniFi Controller on laptop
-- ✅ Verified WiFi isolation working for IoT and Neighbor networks
 
 ### November 25, 2025
 - ✅ Fixed Pi-hole DNS configuration (now points to proxy)
 - ✅ Removed duplicate hosts arrays in pihole.toml
 - ✅ Verified all service DNS entries correct
-- ✅ Updated troubleshooting documentation
 
 ### November 24, 2025
 - ✅ Mac Pro reinstalled with Ubuntu 22.04
 - ✅ Fixed boot hang issue (stex driver timing)
 - ✅ Documented solution for Thunderbolt storage
-- ✅ Verified all services operational
-
-### November 19, 2025
-- ✅ Deployed Nextcloud (CT104) - cloud storage operational
-- ✅ Deployed MariaDB (CT105) - database backend
-- ✅ Deployed n8n (CT112) - workflow automation
-- ✅ Configured Obsidian sync via WebDAV
-- ✅ Mobile access working via Tailscale
-
-### November 18, 2025
-- ✅ Deployed Nginx Proxy Manager (CT102)
-- ✅ Deployed Uptime Kuma (CT103)
-- ✅ Configured 5 proxy hosts
-- ✅ Set up 8 monitoring endpoints
-- ✅ Automated backup retention configured
 
 ## 🎯 Next Actions
 
 ### Immediate (This Week)
-- [ ] Add UniFi Controller to Uptime Kuma monitoring
+- [ ] Add UPS monitoring to Uptime Kuma
+- [ ] Add UPS check to daily-health.sh script
+- [ ] Test UPS notifications (simulate power event)
 - [ ] Migrate IoT devices to IoT SSID
-- [ ] Test neighbor WiFi with actual neighbor device
-- [ ] Investigate Mac Pro Pegasus auto-mount timing
 
 ### Short Term (Next 2 Weeks)
 - [ ] Deploy Vaultwarden password manager
-- [ ] Configure email notifications
+- [ ] Configure email notifications for UPS events
 - [ ] Set up Nextcloud external storage
 - [ ] Plan SSL certificate strategy
-- [ ] Migrate Home Assistant to Proxmox
+- [ ] Migrate Home Assistant to Proxmox (includes NUT integration)
 
 ### Medium Term (Next Month)
 - [ ] Deploy Immich for photos
 - [ ] Deploy Jellyfin for media
-- [ ] Install UPS units
+- [ ] Consider second UPS for N+1 redundancy
 - [ ] Deploy monitoring stack
-- [ ] Configure separate ISP WiFi for hardcoded IoT devices
 
 ## 📊 Resource Utilization
 
@@ -112,7 +127,8 @@ CPU:     16/72 cores allocated (22%)
 RAM:     14/96 GB allocated (14.6%)
 Storage: 7.6/515 GB Ceph used (1.5%)
 Backup:  31/9100 GB used (0.3%)
-Power:   ~185W / $40 AUD per month
+Power:   ~142W idle / $51 AUD per month
+UPS:     17% load, ~34 min runtime
 ```
 
 ### Container Health
@@ -120,7 +136,7 @@ Power:   ~185W / $40 AUD per month
 Running:     9/9 containers
 Auto-start:  9/9 enabled
 Backed up:   8/9 (includes non-operational Redis)
-Monitored:   4/9 via Uptime Kuma (add UniFi)
+Monitored:   4/9 via Uptime Kuma (add UniFi, UPS)
 ```
 
 ## 🖥️ Container Inventory
@@ -160,7 +176,8 @@ Monitored:   4/9 via Uptime Kuma (add UniFi)
 - [Service Registry](docs/reference/services.md)
 - [Quick Commands](QUICKSTART.md)
 - [Network Map](docs/reference/network-table.md)
-- [UniFi WiFi Guide](docs/guides/unifi-wifi-deployment.md)
+- [UPS Configuration](docs/guides/ups-configuration.md)
+- [Power Management](docs/guides/power-management.md)
 
 ### Access Points
 - Proxmox: https://192.168.10.11:8006
@@ -176,13 +193,15 @@ Monitored:   4/9 via Uptime Kuma (add UniFi)
 
 When returning to this project:
 1. Run `./scripts/daily-health.sh`
-2. Check Uptime Kuma for alerts
-3. Verify WiFi networks operational
-4. Review any backup failures
-5. Check UniFi Controller for device status
+2. Check UPS status: `ssh root@192.168.10.11 "upsc cyberpower@localhost ups.status battery.charge"`
+3. Check Uptime Kuma for alerts
+4. Verify WiFi networks operational
+5. Review any backup failures
+6. Check UniFi Controller for device status
 
 ## 🏆 Achievements
 
+- ✅ UPS protection fully configured
 - ✅ Successfully completed rack migration
 - ✅ 100% backup success rate
 - ✅ Zero data loss incidents
@@ -191,6 +210,7 @@ When returning to this project:
 - ✅ Complete WiFi infrastructure deployed
 - ✅ VLAN segmentation with security isolation
 - ✅ 16U rack installation complete
+- ✅ Automated UPS shutdown protection
 
 ---
 

@@ -1,6 +1,6 @@
 # 🔌 Power Management Guide
 
-**Last Updated:** 2025-11-24  
+**Last Updated:** 2025-12-02  
 **Purpose:** Safe procedures for cluster shutdown, startup, and power management  
 **Critical:** Follow sequences exactly to prevent data loss
 
@@ -38,10 +38,17 @@ ceph osd set noout && ceph osd set nobackfill && ceph osd set norebalance
 ceph osd unset noout && ceph osd unset nobackfill && ceph osd unset norebalance
 ```
 
+### UPS Quick Check
+```bash
+# Check UPS status from pve1
+upsc cyberpower@localhost | grep -E "^(ups.status|ups.load|battery.charge|battery.runtime):"
+```
+
 ### What Stays Running
 - ✅ OPNsense router (always on for network)
 - ✅ UniFi switch (always on for connectivity)
 - ✅ ISP router (internet gateway)
+- ✅ UPS (provides backup power)
 
 ### Service Impact During Shutdown
 - ❌ All containerized services unavailable
@@ -65,12 +72,16 @@ ssh root@192.168.10.11 "ceph -s"
 
 # List running containers
 ssh root@192.168.10.11 "pct list | grep running"
+
+# Check UPS status
+ssh root@192.168.10.11 "upsc cyberpower@localhost ups.status battery.charge"
 ```
 
 **Expected:**
 - Cluster: 3 nodes online with quorum
 - Ceph: HEALTH_OK or HEALTH_WARN
-- Containers: 7 running (CT 100-105, 112)
+- Containers: 9 running (CT 100-107, 112)
+- UPS: OL (Online), 100% charge
 
 ### 2. Notify Users (If Applicable)
 - Inform about maintenance window
@@ -104,6 +115,14 @@ echo "$(date): Shutdown for [REASON]" >> ~/homelab-maintenance.log
 ```bash
 # Stop n8n automation
 ssh root@192.168.10.11 "pct stop 112"
+sleep 10
+
+# Stop UniFi Controller
+ssh root@192.168.10.11 "pct stop 107"
+sleep 10
+
+# Stop Redis (if running)
+ssh root@192.168.10.11 "pct stop 106"
 sleep 10
 
 # Stop Nextcloud (depends on MariaDB)
@@ -236,8 +255,11 @@ sudo ip route add 192.168.30.0/24 via 192.168.10.1 2>/dev/null
 # Test connectivity
 ping -c 2 192.168.30.20
 
-# Verify storage mounted
+# Verify storage mounted (may need manual mount)
 ssh xavier@192.168.30.20 "df -h | grep storage"
+
+# If storage not mounted, run manually:
+ssh xavier@192.168.30.20 "sudo /usr/local/bin/mount-pegasus.sh"
 ```
 
 ### Phase 2: Power On Proxmox Nodes (8 minutes)
@@ -350,7 +372,20 @@ done
 ssh root@192.168.10.<node> "systemctl restart mnt-macpro.mount"
 ```
 
-### Phase 8: Final Verification
+### Phase 8: Verify UPS Monitoring
+
+```bash
+# Check UPS status
+ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.load|battery.charge|battery.runtime):'"
+
+# Verify all nodes can see UPS
+for node in 11 12 13; do
+  echo "=== pve$node ==="
+  ssh root@192.168.10.$node "upsc cyberpower@192.168.10.11 ups.status 2>/dev/null | head -1"
+done
+```
+
+### Phase 9: Final Verification
 
 ```bash
 # Run health check
@@ -366,6 +401,9 @@ pct list | grep -c running && echo "containers running"
 echo ""
 echo "=== Backup Mount ==="
 df -h /mnt/macpro | tail -1
+echo ""
+echo "=== UPS Status ==="
+upsc cyberpower@localhost ups.status ups.load battery.charge 2>/dev/null | head -3
 EOF
 ```
 
@@ -379,7 +417,7 @@ EOF
 
 ```bash
 # Quick container stop (no wait)
-for ct in 112 104 105 103 102 101 100; do
+for ct in 112 107 106 104 105 103 102 101 100; do
   ssh root@192.168.10.11 "pct stop $ct &"
 done
 
@@ -429,31 +467,139 @@ ceph pg repair <pg-id>  # If needed
 ## 🔋 UPS Management
 
 ### Current Status
-- **UPS Installed:** ❌ Not yet
-- **Planned:** Dual UPS strategy (N+1 redundancy)
-- **Target:** 3200VA total capacity
+- **UPS Installed:** ✅ Yes
+- **Model:** CyberPower CP1600EPFCLCD-AU
+- **Capacity:** 1600VA / 1000W
+- **Current Load:** ~17% (~142W)
+- **Estimated Runtime:** ~34-45 minutes at current load
 
-### Future UPS Configuration
+### Protected Equipment
 
-**UPS 1 (1600VA):**
-- pve1, pve2
-- OPNsense router
-- UniFi switch
+| Device | Role | NUT Status |
+|--------|------|------------|
+| pve1 | NUT Master (USB) | ✅ Connected |
+| pve2 | NUT Slave | ✅ Monitoring |
+| pve3 | NUT Slave | ✅ Monitoring |
+| OPNsense | Protected | (No NUT client) |
+| UniFi Switch | Protected | (No NUT client) |
+| Mac Pro | NUT Slave (Storage VLAN) | ✅ Monitoring |
+| Pegasus | Protected | (Via Mac Pro) |
 
-**UPS 2 (1600VA):**
-- pve3
-- Mac Pro + Pegasus
-- Monitor/keyboard
+### NUT Architecture
 
-### Automated Shutdown (When UPS Installed)
+```
+CyberPower UPS ──USB──► pve1 (NUT Master)
+                              │
+                    ┌─────────┼─────────┐
+                    │         │         │
+                    ▼         ▼         ▼
+                  pve2      pve3    Mac Pro
+               (Slave)    (Slave)  (Slave)
+              via VLAN10  via VLAN10  via VLAN30
+```
+
+### Quick UPS Commands
 
 ```bash
-# Install NUT (Network UPS Tools)
-apt install nut nut-client nut-server
+# Check full status
+upsc cyberpower@localhost
 
-# Configure for automated shutdown at 20% battery
-# /etc/nut/upsmon.conf
-SHUTDOWNCMD "/usr/local/bin/cluster-shutdown.sh"
+# Key metrics only
+upsc cyberpower@localhost | grep -E "^(ups.status|ups.load|battery.charge|battery.runtime):"
+
+# Check from slave nodes
+upsc cyberpower@192.168.10.11 ups.status
+
+# View NUT logs
+journalctl -u nut-monitor -f
+```
+
+### UPS Status Codes
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| OL | Online (mains power) | Normal operation |
+| OB | On Battery | Power failure - monitoring |
+| LB | Low Battery | Shutdown imminent |
+| FSD | Forced Shutdown | Shutdown in progress |
+
+### Automatic Shutdown Behavior
+
+When power fails:
+1. UPS switches to battery (`OL` → `OB`)
+2. All NUT clients receive notification
+3. Systems continue running on battery
+4. At 10% battery (`battery.charge.low`), NUT triggers FSD
+5. **pve1** runs `/usr/local/bin/cluster-shutdown.sh`:
+   - Sets Ceph maintenance flags
+   - Stops containers gracefully
+   - Unmounts SSHFS
+   - Initiates shutdown
+6. **pve2, pve3, Mac Pro** shut down via standard NUT
+
+### Cluster-Aware Shutdown Script (pve1)
+
+Location: `/usr/local/bin/cluster-shutdown.sh`
+
+```bash
+#!/bin/bash
+# Cluster-aware UPS shutdown script
+# Called by NUT when battery is critical
+
+LOG=/var/log/ups-shutdown.log
+exec >> $LOG 2>&1
+
+echo "========================================"
+echo "$(date): UPS shutdown initiated"
+
+# Step 1: Set Ceph maintenance flags
+echo "$(date): Setting Ceph maintenance flags..."
+ceph osd set noout
+ceph osd set nobackfill
+ceph osd set norebalance
+
+# Step 2: Stop containers gracefully
+echo "$(date): Stopping containers..."
+for ct in 112 107 106 104 105 103 102 101 100; do
+    if pct status $ct 2>/dev/null | grep -q running; then
+        echo "$(date): Stopping CT$ct..."
+        pct shutdown $ct --timeout 30 2>/dev/null || pct stop $ct 2>/dev/null
+    fi
+done
+
+# Step 3: Unmount SSHFS
+echo "$(date): Unmounting backup storage..."
+umount /mnt/macpro 2>/dev/null
+
+# Step 4: Shutdown
+echo "$(date): Initiating system shutdown"
+/sbin/shutdown -h +0
+```
+
+### Configuration Files
+
+See [UPS Configuration Guide](docs/guides/ups-configuration.md) for complete NUT configuration details.
+
+### Testing UPS
+
+**Safe tests (won't cause shutdown):**
+```bash
+# Verify NUT services
+systemctl status nut-server nut-monitor
+
+# Check all slaves can connect
+for node in 12 13; do
+  ssh root@192.168.10.$node "upsc cyberpower@192.168.10.11 ups.status"
+done
+
+# Check Mac Pro can connect
+ssh xavier@192.168.30.20 "upsc cyberpower@192.168.30.11 ups.status"
+```
+
+**Full test (WILL cause shutdown):**
+```bash
+# DO NOT RUN unless you want to test full shutdown
+# upsmon -c fsd
 ```
 
 ---
@@ -469,6 +615,15 @@ SHUTDOWNCMD "/usr/local/bin/cluster-shutdown.sh"
 | UniFi Switch | 10W | 15W | 0.36 |
 | Mac Pro + Pegasus | 75W | 150W | 3.0 |
 | **Total** | **142W** | **260W** | **5.64** |
+
+### UPS Runtime Estimates
+
+| Load | Percentage | Est. Runtime |
+|------|------------|--------------|
+| Current (142W) | 17% | ~34-45 min |
+| All devices active (260W) | 26% | ~20-25 min |
+| 50% load (500W) | 50% | ~15 min |
+| Full load (1000W) | 100% | ~5 min |
 
 ### Cost Analysis (Darwin rates: $0.30/kWh)
 
@@ -507,13 +662,30 @@ sudo hdparm -S 240 /dev/sda  # Standby after 20 min
 - Verify backups
 - Update containers
 - Clean up logs
-- Test UPS (when installed)
+- Check UPS battery health
 
 **Quarterly Maintenance:**
 - Firmware updates
 - Deep cleaning (dust filters)
 - Cable management
 - Thermal paste check
+- UPS capacity test
+
+### UPS Maintenance
+
+**Monthly:**
+```bash
+# Check battery health
+upsc cyberpower@localhost battery.charge
+upsc cyberpower@localhost battery.runtime
+
+# Review logs for power events
+journalctl -u nut-monitor --since "1 month ago" | grep -i "battery\|power"
+```
+
+**Annually:**
+- Consider battery replacement (every 3-5 years)
+- Perform full capacity test
 
 ### Maintenance Window Procedure
 
@@ -550,6 +722,11 @@ sudo hdparm -S 240 /dev/sda  # Standby after 20 min
 **Reason:** [Power maintenance|Updates|Hardware change|Other]
 **Duration:** HH:MM
 
+### Pre-Maintenance
+- [ ] UPS status checked (charge: __%, load: __%)
+- [ ] Cluster health verified
+- [ ] Backups confirmed
+
 ### Shutdown
 - [ ] Pre-checks completed
 - [ ] DNS fallback configured
@@ -564,12 +741,14 @@ sudo hdparm -S 240 /dev/sda  # Standby after 20 min
 
 ### Startup  
 - [ ] Mac Pro started (Time: __)
+- [ ] Pegasus mounted
 - [ ] Nodes started (Time: __)
 - [ ] Cluster formed
 - [ ] Ceph flags cleared
 - [ ] Containers running
 - [ ] Services verified
 - [ ] Mounts verified
+- [ ] UPS monitoring verified
 - [ ] Total startup time: __
 
 ### Issues Encountered
@@ -617,6 +796,25 @@ ssh root@192.168.10.11 "pct start 101"
 nslookup google.com 192.168.40.53
 ```
 
+**UPS not detected:**
+```bash
+# Check USB connection
+lsusb | grep -i cyber
+
+# Restart NUT driver
+systemctl restart nut-driver.target
+systemctl restart nut-server
+```
+
+**Slave can't connect to NUT master:**
+```bash
+# Check upsd is listening
+ssh root@192.168.10.11 "ss -tlnp | grep 3493"
+
+# Test connectivity
+nc -zv 192.168.10.11 3493
+```
+
 ---
 
 ## ⏱️ Time Estimates
@@ -633,4 +831,5 @@ nslookup google.com 192.168.40.53
 
 *Always follow the sequence*  
 *Never skip Ceph maintenance flags*  
+*UPS protects hardware, proper shutdown protects data*  
 *Document every maintenance event*
