@@ -1,9 +1,9 @@
 # 📊 Current Homelab Status
 
-**Last Updated:** 2025-12-02  
+**Last Updated:** 2025-12-03  
 **Overall Health:** 🟢 Operational  
-**Uptime:** Freshly restarted after rack migration  
-**Last Incident:** Rack migration completed successfully
+**Uptime:** Stable after DNS-over-Tailscale fix  
+**Last Incident:** Tailscale DNS resolution fixed
 
 ## 🚦 Quick Status
 
@@ -14,13 +14,13 @@
 | **Network** | ✅ Operational | All VLANs active, routing working |
 | **Containers** | ✅ 9/9 Running | All containers up (Redis service inactive) |
 | **Backups** | ✅ Automated | Daily 02:00, Mac Pro NAS mounted |
-| **Remote Access** | ✅ Active | Tailscale operational |
-| **DNS** | ✅ Working | Pi-hole operational |
+| **Remote Access** | ✅ Active | Tailscale operational with DNS |
+| **DNS** | ✅ Working | Pi-hole operational, Tailscale DNS configured |
 | **Mac Pro NAS** | ✅ Operational | SSHFS mounted, Pegasus storage online |
 | **UniFi WiFi** | ✅ Operational | 3 APs, 3 SSIDs, controller on CT107 |
 | **UPS** | ✅ Protected | CyberPower 1600VA, 17% load, all systems monitored |
 
-## 🔋 UPS Status
+## 📋 UPS Status
 
 | Metric | Value |
 |--------|-------|
@@ -52,171 +52,78 @@ ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.lo
 - **Workaround:** Run `sudo /usr/local/bin/mount-pegasus.sh` after boot
 - **Status:** Service is enabled, but timing issue persists
 
-### 2. Redis Service Not Running
-- **Impact:** None - Nextcloud works without cache
-- **Cause:** systemd namespace issues in unprivileged LXC
-- **Workaround:** Not needed currently
-- **Fix Plan:** Redeploy with Docker when needed
+### 2. ProtonVPN Blocks Tailscale DNS
+- **Impact:** Low - only affects remote access with ProtonVPN active
+- **Cause:** ProtonVPN's DNS leak protection intercepts all DNS queries
+- **Workaround:** Disconnect ProtonVPN when accessing homelab remotely
+- **Status:** Known limitation, documented in troubleshooting guide
 
-## 📈 Recent Changes
+## 🟢 Recently Resolved
 
-### December 2, 2025 - UPS Installation
-- ✅ **Installed CyberPower CP1600EPFCLCD-AU UPS**
-- ✅ Connected all rack equipment to UPS battery backup
-- ✅ Configured NUT server on pve1 (netserver mode)
-- ✅ Configured NUT clients on pve2, pve3 (netclient mode)
-- ✅ Configured NUT client on Mac Pro via Storage VLAN
-- ✅ Created cluster-aware shutdown script for Ceph protection
-- ✅ Verified all systems can monitor UPS status
-- ✅ Added UPS Push monitor to Uptime Kuma
-- ✅ Created ups-monitor-push.sh script with cron job
-- ✅ Documented complete UPS configuration
+### DNS over Tailscale (RESOLVED 2025-12-03)
+- **Issue:** DNS queries to Pi-hole timed out when accessing homelab via Tailscale
+- **Root Cause:** Two issues:
+  1. OPNsense had no route for Tailscale return traffic (100.64.0.0/10)
+  2. Tailscale DNS settings not configured to use Pi-hole
+- **Solution:** 
+  1. Added static route in OPNsense: 100.64.0.0/10 → Tailscale_GW (192.168.40.10)
+  2. Configured Tailscale admin DNS: Pi-hole as nameserver, homelab.local as search domain
+  3. Enabled "Override DNS servers" in Tailscale admin
+- **Status:** ✅ Fully working (when ProtonVPN disconnected)
 
-### December 2, 2025 - Rack Migration
-- ✅ **Completed 16U rack installation**
-- ✅ Safely shut down all infrastructure
-- ✅ Physically relocated: Mac Pro, Pegasus, 3× HP Elite Mini, OPNsense, UniFi Switch
-- ✅ Reconnected all equipment
-- ✅ Verified Ceph HEALTH_OK after restart
-- ✅ Restored Mac Pro NAS mounts on all nodes
-- ⚠️ **Issue Found:** UniFi Switch Port 15 reset to Default VLAN - reconfigured to Storage (VLAN 30)
-- ⚠️ **Issue Found:** Mac Pro Pegasus didn't auto-mount - required manual mount script
+## 🔄 Recent Changes
 
-### November 28, 2025
-- ✅ Deployed UniFi Controller (CT107) on Proxmox
-- ✅ Migrated switch from laptop to container controller
-- ✅ Adopted 3 UniFi U6+ access points
-- ✅ Configured 3 SSIDs: HomeNet, IoT, Neighbor
-- ✅ Created VLAN 60 (IoT) in OPNsense
-- ✅ Configured IoT firewall rules (DNS allow, internal block, internet allow)
-- ✅ Updated UniFi Controller from 9.5.21 to 10.0.160
+| Date | Change | Impact |
+|------|--------|--------|
+| 2025-12-03 | Added OPNsense static route for Tailscale (100.64.0.0/10) | Enables return traffic for Tailscale clients |
+| 2025-12-03 | Configured Tailscale DNS (Pi-hole + homelab.local) | .homelab.local domains resolve remotely |
+| 2025-12-02 | Rack migration completed | All hardware in new rack |
+| 2025-11-28 | UniFi WiFi deployment | 3 APs, 3 SSIDs operational |
 
-### November 25, 2025
-- ✅ Fixed Pi-hole DNS configuration (now points to proxy)
-- ✅ Removed duplicate hosts arrays in pihole.toml
-- ✅ Verified all service DNS entries correct
+## 📝 Next Actions
 
-### November 24, 2025
-- ✅ Mac Pro reinstalled with Ubuntu 22.04
-- ✅ Fixed boot hang issue (stex driver timing)
-- ✅ Documented solution for Thunderbolt storage
+1. **Consider:** ProtonVPN split tunneling to allow both VPNs simultaneously
+2. **Monitor:** Tailscale DNS performance over time
+3. **Document:** Update GitHub repository with latest changes
 
-## 🎯 Next Actions
+## 🔧 OPNsense Configuration Reference
 
-### Immediate (This Week)
-- [x] Add UPS monitoring to Uptime Kuma
-- [x] Add UPS check to daily-health.sh script
-- [ ] Test UPS notifications (simulate power event)
-- [ ] Migrate IoT devices to IoT SSID
+### Gateways (System → Gateways → Configuration)
+| Name | Interface | IP Address | Purpose |
+|------|-----------|------------|---------|
+| WAN_GW | WAN | 10.1.1.1 | Internet gateway |
+| Tailscale_GW | VMsVLAN | 192.168.40.10 | Tailscale subnet router |
 
-### Short Term (Next 2 Weeks)
-- [ ] Deploy Vaultwarden password manager
-- [ ] Configure email notifications for UPS events
-- [ ] Set up Nextcloud external storage
-- [ ] Plan SSL certificate strategy
-- [ ] Migrate Home Assistant to Proxmox (includes NUT integration)
+### Static Routes (System → Routes → Configuration)
+| Destination | Gateway | Description |
+|-------------|---------|-------------|
+| 100.64.0.0/10 | Tailscale_GW | Tailscale CGNAT return traffic |
 
-### Medium Term (Next Month)
-- [ ] Deploy Immich for photos
-- [ ] Deploy Jellyfin for media
-- [ ] Consider second UPS for N+1 redundancy
-- [ ] Deploy monitoring stack
+## 🌐 Tailscale DNS Configuration
 
-## 📊 Resource Utilization
+**Admin Panel:** https://login.tailscale.com/admin/dns
 
-### Cluster Resources
-```
-CPU:     16/72 cores allocated (22%)
-RAM:     14/96 GB allocated (14.6%)
-Storage: 7.6/515 GB Ceph used (1.5%)
-Backup:  31/9100 GB used (0.3%)
-Power:   ~142W idle / $51 AUD per month
-UPS:     17% load, ~34 min runtime
-```
+| Setting | Value |
+|---------|-------|
+| Global Nameserver | 192.168.40.53 (Pi-hole) |
+| Search Domain | homelab.local |
+| Override DNS servers | ✅ Enabled |
 
-### Container Health
-```
-Running:     9/9 containers
-Auto-start:  9/9 enabled
-Backed up:   8/9 (includes non-operational Redis)
-Monitored:   5/9 via Uptime Kuma (including UPS)
-```
+## 📊 Service Health
 
-## 🖥️ Container Inventory
-
-| CT ID | Service | Node | IP | Status |
-|-------|---------|------|-----|--------|
-| 100 | Tailscale | pve1 | 192.168.40.10 | ✅ Running |
-| 101 | Pi-hole | pve1 | 192.168.40.53 | ✅ Running |
-| 102 | Nginx Proxy | pve2 | 192.168.40.22 | ✅ Running |
-| 103 | Uptime Kuma | pve2 | 192.168.40.23 | ✅ Running |
-| 104 | Nextcloud | pve3 | 192.168.40.31 | ✅ Running |
-| 105 | MariaDB | pve3 | 192.168.40.32 | ✅ Running |
-| 106 | Redis | pve3 | 192.168.40.33 | ⚠️ Service inactive |
-| 107 | UniFi Controller | pve1 | 192.168.40.40 | ✅ Running |
-| 112 | n8n | pve1 | 192.168.40.61 | ✅ Running |
-
-## 📡 WiFi Infrastructure
-
-### Access Points
-| Name | Port | IP | Status |
-|------|------|-----|--------|
-| AP-Upstairs | 1 | 192.168.1.145 | ✅ Online |
-| AP-Downstairs | 2 | 192.168.1.146 | ✅ Online |
-| AP-Neighbor | 4 | 192.168.1.147 | ✅ Online |
-
-### SSIDs
-| SSID | VLAN | Purpose | Status |
-|------|------|---------|--------|
-| HomeNet | 40 | Trusted devices | ✅ Working |
-| IoT | 60 | Smart home devices | ✅ Working |
-| Neighbor | 50 | Neighbor internet | ✅ Working |
-
-## 🔗 Quick Links
-
-### Documentation
-- [Infrastructure Details](docs/reference/infrastructure.md)
-- [Service Registry](docs/reference/services.md)
-- [Quick Commands](QUICKSTART.md)
-- [Network Map](docs/reference/network-table.md)
-- [UPS Configuration](docs/guides/ups-configuration.md)
-- [Power Management](docs/guides/power-management.md)
-
-### Access Points
-- Proxmox: https://192.168.10.11:8006
-- UniFi: https://192.168.40.40:8443
-- Services: http://status.homelab.local
-- Remote: Via Tailscale VPN
-
-### External
-- [Tailscale Admin](https://login.tailscale.com)
-- [GitHub Repository](https://github.com/lasit/homelab-proxmox-cluster)
-
-## 📝 Notes for Next Session
-
-When returning to this project:
-1. Run `./scripts/daily-health.sh`
-2. Check UPS status: `ssh root@192.168.10.11 "upsc cyberpower@localhost ups.status battery.charge"`
-3. Check Uptime Kuma for alerts
-4. Verify WiFi networks operational
-5. Review any backup failures
-6. Check UniFi Controller for device status
-
-## 🏆 Achievements
-
-- ✅ UPS protection fully configured
-- ✅ UPS monitoring in Uptime Kuma
-- ✅ Successfully completed rack migration
-- ✅ 100% backup success rate
-- ✅ Zero data loss incidents
-- ✅ Successful disaster recovery (Mac Pro)
-- ✅ 9 services deployed and operational
-- ✅ Complete WiFi infrastructure deployed
-- ✅ VLAN segmentation with security isolation
-- ✅ 16U rack installation complete
-- ✅ Automated UPS shutdown protection
+| CT ID | Service | IP | Status | Notes |
+|-------|---------|-----|--------|-------|
+| 100 | Tailscale | 192.168.40.10 | ✅ Running | Subnet router + DNS |
+| 101 | Pi-hole | 192.168.40.53 | ✅ Running | DNS server |
+| 102 | Nginx Proxy | 192.168.40.22 | ✅ Running | Reverse proxy |
+| 103 | Uptime Kuma | 192.168.40.23 | ✅ Running | Monitoring |
+| 104 | Nextcloud | 192.168.40.31 | ✅ Running | Cloud storage |
+| 105 | MariaDB | 192.168.40.32 | ✅ Running | Database |
+| 106 | Redis | 192.168.40.33 | ⚠️ Container only | Service not configured |
+| 107 | UniFi Controller | 192.168.40.40 | ✅ Running | Network management |
+| 112 | n8n | 192.168.40.61 | ✅ Running | Automation |
 
 ---
 
-*Auto-updated by verification scripts*  
-*For detailed status, run: `./scripts/verify-state.sh`*
+*Update this file after any infrastructure changes*  
+*Last verified: 2025-12-03*

@@ -1,6 +1,6 @@
 # 🔧 Troubleshooting Guide
 
-**Last Updated:** 2025-11-24  
+**Last Updated:** 2025-12-03  
 **Purpose:** Problem/solution database from actual issues encountered  
 **Format:** Symptom → Diagnosis → Solution → Prevention
 
@@ -127,6 +127,132 @@ exit
 - Document DNS architecture clearly
 - Use verification script after changes
 - Check for duplicate arrays after editing pihole.toml
+
+---
+
+### DNS Over Tailscale Not Working (RESOLVED 2025-12-03)
+
+**Symptom:**
+- DNS queries to Pi-hole (192.168.40.53) timeout when connected via Tailscale
+- Ping and SSH work fine over Tailscale
+- HTTP access by IP works, but not by hostname
+- nslookup times out:
+  ```
+  PS C:\Users\xavie> nslookup status.homelab.local 192.168.40.53
+  DNS request timed out.
+  ```
+
+**Root Cause:**
+Two separate issues combined:
+
+1. **Asymmetric routing:** Pi-hole receives DNS queries from Tailscale clients (100.x.x.x) but doesn't know how to send responses back. It sends them to its default gateway (OPNsense), which has no route to 100.64.0.0/10.
+
+2. **Windows DNS not using Tailscale:** Even after fixing routing, Windows browsers use the system's default DNS (Wi-Fi adapter) not Tailscale's DNS.
+
+3. **ProtonVPN DNS leak protection:** If ProtonVPN is running, it intercepts ALL DNS queries before they reach Tailscale.
+
+**Diagnosis:**
+```bash
+# On Pi-hole container - capture DNS traffic
+pct enter 101
+apt update && apt install tcpdump -y
+tcpdump -i eth0 port 53 -nn
+
+# While running, send DNS query from Windows laptop
+# If NO packets appear from 100.x.x.x, traffic isn't reaching Pi-hole
+
+# On Tailscale container - verify packets arrive
+pct enter 100
+apt update && apt install tcpdump -y
+tcpdump -i any port 53 -nn
+
+# If packets arrive at tailscale0 but not eth0, routing issue
+# If no packets arrive at all, client-side issue (VPN interception)
+
+# Compare with ICMP which works:
+tcpdump -i any icmp -nn
+# Ping from Windows - should see packets on both tailscale0 and eth0
+```
+
+**Solution:**
+
+**Step 1: Add OPNsense gateway for Tailscale**
+```
+Location: OPNsense → System → Gateways → Configuration → Add
+
+Settings:
+  - Name: Tailscale_GW
+  - Interface: VMsVLAN (your VLAN 40 interface, might be opt4)
+  - Address Family: IPv4
+  - IP Address: 192.168.40.10
+  - Disable Gateway Monitoring: ✓ (checked)
+  - Description: Tailscale subnet router
+
+Save and Apply Changes
+```
+
+**Step 2: Add OPNsense static route for Tailscale return traffic**
+```
+Location: OPNsense → System → Routes → Configuration → Add
+
+Settings:
+  - Network Address: 100.64.0.0/10
+  - Gateway: Tailscale_GW - 192.168.40.10
+  - Description: Tailscale CGNAT return traffic
+
+Save and Apply Changes
+```
+
+**Step 3: Configure Tailscale DNS settings**
+```
+Location: https://login.tailscale.com/admin/dns
+
+1. Under "Nameservers" → Add nameserver → Custom
+   - Nameserver: 192.168.40.53
+   - Leave "Restrict to domain" OFF
+   - Save
+   
+2. Under "Search Domains" → Add search domain
+   - Enter: homelab.local
+   - Save
+   
+3. Enable "Override DNS servers" toggle (next to Global nameservers)
+   - This forces all Tailscale clients to use Pi-hole
+   
+4. Save all changes
+```
+
+**Step 4: If using ProtonVPN, disconnect it when accessing homelab**
+
+ProtonVPN's DNS leak protection intercepts DNS queries at a low level that overrides even Tailscale's MagicDNS. Options:
+- Disconnect ProtonVPN when accessing homelab (simplest)
+- Configure ProtonVPN split tunneling to exclude Tailscale
+- Disable ProtonVPN DNS leak protection (not recommended)
+
+**Verification:**
+```powershell
+# Windows - Should resolve without specifying DNS server
+nslookup status.homelab.local
+
+# Expected output:
+# Server:  magicdns.localhost-tailscale-daemon
+# Address:  100.100.100.100
+# Name:    status.homelab.local
+# Address:  192.168.40.22
+
+# Test in browser
+http://status.homelab.local
+```
+
+**Why ICMP/SSH worked but DNS didn't:**
+- ICMP (ping) worked because responses route back through Tailscale container
+- SSH worked because TCP connections are stateful - Tailscale container handles the full connection
+- DNS (especially UDP) failed because the Tailscale container does pure routing (no NAT/MASQUERADE), so return traffic from Pi-hole went to OPNsense instead of back through Tailscale
+
+**Prevention:**
+- Always add static routes for VPN return traffic when using subnet routing without NAT
+- Configure Tailscale DNS settings during initial deployment
+- Document VPN conflicts (ProtonVPN, etc.) that may interfere with homelab access
 
 ---
 
@@ -413,33 +539,13 @@ nslookup doubleclick.net 192.168.40.53
 pct exec <CTID> -- ss -tulpn | grep <port>
 ```
 
-**3. Firewall blocking:**
+**3. Service rejecting requests:**
 ```bash
-# Ensure no firewall between proxy and service
-```
+# Check service logs
+pct exec <CTID> -- journalctl -u <service> --tail 50
 
----
-
-### Nextcloud "Access Through Untrusted Domain"
-
-**Symptom:**
-- Error when accessing via Tailscale
-- Works via normal URL
-- Mobile app can't connect
-
-**Solution:**
-```bash
-# Add IP to trusted domains
-pct exec 104 -- nano /var/www/nextcloud/config/config.php
-
-# Add to trusted_domains array:
-'trusted_domains' => 
-array (
-  0 => 'cloud.homelab.local',
-  1 => '192.168.40.31',
-),
-
-# Save and exit
+# Some services need domain configuration
+# to accept requests from the proxy hostname
 ```
 
 ---
@@ -757,7 +863,7 @@ ceph -s
 
 ---
 
-## 🏃 Quick Diagnostic Commands
+## 🃏 Quick Diagnostic Commands
 
 ### One-Line Health Check
 ```bash
@@ -777,6 +883,13 @@ for host in pve1 pve2 pve3 nginx pihole status cloud automation; do echo -n "$ho
 ### Container Resource Check
 ```bash
 for ct in 100 101 102 103 104 105 112; do echo "CT$ct: $(pct exec $ct -- free -m | grep Mem | awk '{print $3"/"$2"MB"}') $(pct exec $ct -- df -h / | tail -1 | awk '{print $3"/"$2}')"; done 2>/dev/null
+```
+
+### Test Tailscale DNS (from remote device)
+```powershell
+# Windows
+nslookup status.homelab.local
+# Should show server as magicdns.localhost-tailscale-daemon (100.100.100.100)
 ```
 
 ---

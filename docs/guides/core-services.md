@@ -1,6 +1,6 @@
 # 🚀 Core Services Deployment Guide
 
-**Last Updated:** 2025-11-25  
+**Last Updated:** 2025-12-03  
 **Services Covered:** Tailscale, Pi-hole, Nginx Proxy Manager  
 **Purpose:** Step-by-step deployment procedures for foundational homelab services
 
@@ -106,6 +106,49 @@ tailscale up --advertise-routes=192.168.10.0/24,192.168.40.0/24,10.1.1.0/24 --ac
 4. Enable all subnet routes
 5. Save
 
+### Configure Tailscale DNS (Admin Panel)
+
+For .homelab.local domains to resolve when connected remotely via Tailscale:
+
+1. Go to https://login.tailscale.com/admin/dns
+
+2. **Add Pi-hole as nameserver:**
+   - Click "Add nameserver" → "Custom"
+   - Nameserver: `192.168.40.53`
+   - Leave "Restrict to domain" OFF (we want global DNS)
+   - Save
+
+3. **Add search domain:**
+   - Under "Search Domains", click "Add search domain"
+   - Enter: `homelab.local`
+   - Save
+
+4. **Enable DNS override:**
+   - Toggle ON "Override DNS servers"
+   - This forces all Tailscale clients to use Pi-hole
+
+### Configure OPNsense Return Route
+
+**Critical:** Without this route, services can't respond to Tailscale clients.
+
+1. **Add Tailscale gateway:**
+   - OPNsense → System → Gateways → Configuration → Add
+   - Name: `Tailscale_GW`
+   - Interface: `VMsVLAN` (VLAN 40, might be opt4)
+   - Address Family: `IPv4`
+   - IP Address: `192.168.40.10`
+   - Disable Gateway Monitoring: ✓
+   - Save
+
+2. **Add static route:**
+   - OPNsense → System → Routes → Configuration → Add
+   - Network Address: `100.64.0.0/10`
+   - Gateway: `Tailscale_GW`
+   - Description: `Tailscale CGNAT return traffic`
+   - Save & Apply
+
+**Why this is needed:** Tailscale uses CGNAT IPs (100.64.0.0/10). When a Tailscale client queries Pi-hole, the response needs to go back through the Tailscale container, not out the WAN.
+
 ### Verification
 
 ```bash
@@ -121,6 +164,35 @@ tailscale status
 exit
 ```
 
+### Remote DNS Verification
+
+From a Tailscale-connected device:
+
+```powershell
+# Windows - should resolve without specifying DNS server
+nslookup status.homelab.local
+
+# Expected output:
+# Server:  magicdns.localhost-tailscale-daemon
+# Address:  100.100.100.100
+# Name:    status.homelab.local
+# Address:  192.168.40.22
+```
+
+```bash
+# Linux/Mac
+dig status.homelab.local
+
+# Or
+nslookup status.homelab.local
+```
+
+### Known Limitation: VPN Conflicts
+
+If using another VPN (ProtonVPN, NordVPN, etc.) alongside Tailscale, their DNS leak protection may intercept queries before Tailscale can handle them.
+
+**Workaround:** Disconnect the other VPN when accessing homelab, OR configure split tunneling to exclude Tailscale traffic.
+
 ### Key Issues Encountered
 
 **Issue:** tailscaled won't start  
@@ -128,6 +200,22 @@ exit
 
 **Issue:** Subnet routes not working  
 **Solution:** Enabled IP forwarding and approved routes in admin panel
+
+**Issue:** DNS queries timeout over Tailscale  
+**Solution:** Added OPNsense static route (100.64.0.0/10 → Tailscale container) and configured Tailscale admin DNS settings
+
+### Quick Reference: Complete Tailscale Configuration
+
+| Component | Setting | Value |
+|-----------|---------|-------|
+| **Container** | IP | 192.168.40.10 |
+| **Container** | Tailscale IP | 100.89.200.114 |
+| **Container** | Advertised Routes | 192.168.10.0/24, 192.168.40.0/24, 10.1.1.0/24 |
+| **Admin DNS** | Nameserver | 192.168.40.53 |
+| **Admin DNS** | Search Domain | homelab.local |
+| **Admin DNS** | Override DNS | ✅ Enabled |
+| **OPNsense Gateway** | Tailscale_GW | 192.168.40.10 on VMsVLAN |
+| **OPNsense Route** | 100.64.0.0/10 | → Tailscale_GW |
 
 ---
 
@@ -490,6 +578,24 @@ nslookup doubleclick.net 192.168.40.53
 # Should return 0.0.0.0
 ```
 
+### Remote Access Test (via Tailscale)
+
+```powershell
+# From Windows laptop connected via Tailscale
+
+# 1. Verify Tailscale DNS is working
+nslookup status.homelab.local
+# Should show server as magicdns.localhost-tailscale-daemon
+
+# 2. Test service access
+curl http://status.homelab.local
+
+# 3. Test in browser
+# http://status.homelab.local
+# http://pihole.homelab.local
+# http://cloud.homelab.local
+```
+
 ### Expected Results
 
 | Test | Expected Result | Status |
@@ -499,6 +605,7 @@ nslookup doubleclick.net 192.168.40.53
 | NPM Web | HTTP 200 | ✓ |
 | Tailscale | Connected, routes active | ✓ |
 | Ad Blocking | ~25% queries blocked | ✓ |
+| Remote DNS | Resolves via MagicDNS | ✓ |
 
 ---
 
@@ -545,6 +652,20 @@ nslookup service.homelab.local 192.168.40.53
 # Should return actual IP for direct services (opnsense, pve nodes)
 ```
 
+#### DNS Not Working Over Tailscale
+```bash
+# Check OPNsense has Tailscale route
+# System → Routes → Configuration
+# Should have: 100.64.0.0/10 → Tailscale_GW
+
+# Check Tailscale DNS settings
+# https://login.tailscale.com/admin/dns
+# Should have: 192.168.40.53, homelab.local search domain, Override enabled
+
+# If using ProtonVPN, disconnect it
+# ProtonVPN DNS leak protection blocks Tailscale DNS
+```
+
 ---
 
 ## Lessons Learned
@@ -575,6 +696,12 @@ nslookup service.homelab.local 192.168.40.53
    - Test each service before moving to next
    - Verify DNS resolution at each step
    - Document working configurations immediately
+
+6. **VPN Routing Requires Planning**
+   - Subnet routing without NAT needs return routes
+   - OPNsense must know how to reach Tailscale IPs (100.64.0.0/10)
+   - Configure Tailscale DNS settings for remote access
+   - Other VPNs (ProtonVPN) may conflict with Tailscale DNS
 
 ### Best Practices Established
 

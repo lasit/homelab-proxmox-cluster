@@ -1,6 +1,6 @@
 # 🌐 Network Configuration Table
 
-**Last Updated:** 2025-11-28  
+**Last Updated:** 2025-12-03  
 **Status:** ✅ Operational  
 **Single Source of Truth for ALL Network Information**
 
@@ -23,7 +23,7 @@ INTERNET
                             └─► VLAN 60: IoT (192.168.60.0/24) [PARTIAL ISOLATION]
 ```
 
-## 🔢 VLAN Configuration
+## 📢 VLAN Configuration
 
 | VLAN ID | Name | Network | Gateway | DHCP Range | DNS | Purpose | Isolation |
 |---------|------|---------|---------|------------|-----|---------|-----------|
@@ -125,7 +125,7 @@ INTERNET
 | .174 | Fronius Inverter | Solar monitoring | Web interface |
 | .211 | Daikin AC | Bedroom climate | Home Assistant |
 
-## 🔤 DNS Configuration
+## 📤 DNS Configuration
 
 ### Pi-hole Local DNS Entries
 Current configuration in `/etc/pihole/pihole.toml`:
@@ -149,9 +149,31 @@ Current configuration in `/etc/pihole/pihole.toml`:
 2. Pi-hole checks local entries
 3. If not found, forwards to upstream (8.8.8.8, 1.1.1.1)
 
-## 🔀 Routing Configuration
+### Tailscale DNS Configuration
+Configured at https://login.tailscale.com/admin/dns
 
-### OPNsense Routes
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Global Nameserver | 192.168.40.53 | Pi-hole for all Tailscale clients |
+| Search Domain | homelab.local | Allows short names (e.g., `status` instead of `status.homelab.local`) |
+| Override DNS servers | ✅ Enabled | Forces Tailscale clients to use Pi-hole |
+
+## 📀 Routing Configuration
+
+### OPNsense Gateways (System → Gateways → Configuration)
+| Name | Interface | IP Address | Monitor | Description |
+|------|-----------|------------|---------|-------------|
+| WAN_GW | WAN | 10.1.1.1 | Yes | Internet gateway (ISP) |
+| Tailscale_GW | VMsVLAN (opt4) | 192.168.40.10 | No | Tailscale subnet router |
+
+### OPNsense Static Routes (System → Routes → Configuration)
+| Destination | Gateway | Description |
+|-------------|---------|-------------|
+| 100.64.0.0/10 | Tailscale_GW | Tailscale CGNAT return traffic |
+
+**Why this route is needed:** When Tailscale clients (100.x.x.x IPs) connect to homelab services, the services respond to the Tailscale IP. Without this route, OPNsense doesn't know how to reach 100.64.0.0/10 and drops the response packets. This route tells OPNsense to send all Tailscale-bound traffic through the Tailscale container (CT100).
+
+### Default Routes
 | Destination | Gateway | Interface | Notes |
 |-------------|---------|-----------|-------|
 | 0.0.0.0/0 | 10.1.1.1 | WAN | Default route |
@@ -188,7 +210,7 @@ Current configuration in `/etc/pihole/pihole.toml`:
 - Corosync and Storage VLANs completely isolated
 - IoT VLAN can only reach Pi-hole on port 53, blocked from all other internal
 
-## 🔌 Switch Port Assignments
+## 📌 Switch Port Assignments
 
 | Port | Device | VLAN Config | PoE | Status |
 |------|--------|-------------|-----|--------|
@@ -212,13 +234,13 @@ Current configuration in `/etc/pihole/pihole.toml`:
 
 **Critical Note:** Port 3 (OPNsense) must use **Custom** tagged VLAN selection, not "Allow All". When creating new VLANs, manually add them to Port 3's tagged list and restart the switch.
 
-## 🌍 External Access
+## 🌐 External Access
 
 ### Tailscale VPN Configuration
 | Device | Tailscale IP | Advertised Routes | Status |
 |--------|--------------|-------------------|--------|
 | Gateway (CT100) | 100.89.200.114 | 192.168.10.0/24, 192.168.40.0/24, 10.1.1.0/24 | ✅ Active |
-| Laptop | 100.102.3.77 | None | ✅ Active |
+| Laptop | 100.70.57.108 | None | ✅ Active |
 | Phone | 100.103.101.25 | None | ✅ Active |
 
 ### Internet Connection
@@ -227,7 +249,7 @@ Current configuration in `/etc/pihole/pihole.toml`:
 - **OPNsense WAN:** 10.1.1.17 (DHCP)
 - **MTU:** 1500
 
-## 📏 Network Standards & Best Practices
+## 📐 Network Standards & Best Practices
 
 ### IP Assignment Guidelines
 - .1-.9: Infrastructure (routers, gateways)
@@ -272,10 +294,15 @@ swctrl vlan show id 3  # Verify OPNsense port has all VLANs
 # Check AP ebtables (if VLAN issues)
 ssh tao.wuwei@192.168.1.145
 ebtables -t broute -L
+
+# Verify Tailscale route on OPNsense
+# System → Routes → Configuration should show 100.64.0.0/10 → Tailscale_GW
 ```
 
 ## 📝 Recent Network Changes
 
+- **2025-12-03:** Added Tailscale static route (100.64.0.0/10 → Tailscale_GW)
+- **2025-12-03:** Configured Tailscale DNS (Pi-hole + homelab.local search domain)
 - **2025-11-28:** Deployed UniFi WiFi infrastructure (3 APs, 3 SSIDs)
 - **2025-11-28:** Created VLAN 60 (IoT) with isolation firewall rules
 - **2025-11-28:** Fixed Port 3 to use Custom VLAN selection (not "Allow All")
@@ -286,6 +313,12 @@ ebtables -t broute -L
 - **2025-11-12:** All VLANs configured and operational
 
 ## ⚠️ Known Issues & Workarounds
+
+### ProtonVPN Blocks Tailscale DNS
+- **Issue:** ProtonVPN's DNS leak protection intercepts all DNS queries
+- **Symptom:** .homelab.local domains don't resolve when ProtonVPN is connected
+- **Workaround:** Disconnect ProtonVPN when accessing homelab remotely
+- **Alternative:** Configure ProtonVPN split tunneling to exclude Tailscale
 
 ### UniFi AP ebtables DROP rules
 - **Issue:** APs may add ebtables rules that block VLAN traffic
