@@ -193,6 +193,34 @@ If using another VPN (ProtonVPN, NordVPN, etc.) alongside Tailscale, their DNS l
 
 **Workaround:** Disconnect the other VPN when accessing homelab, OR configure split tunneling to exclude Tailscale traffic.
 
+---
+
+### UniFi SSID Not Visible on Some APs (RESOLVED 2025-12-03)
+
+**Symptom:**
+- WiFi network visible in one location but not another
+- AP shows online in controller
+- Other SSIDs work fine on the "missing" AP
+
+**Root Cause:**
+- SSID "Broadcasting APs" setting configured to "Specific" with only some APs selected
+
+**Solution:**
+```
+1. UniFi Controller → Settings → WiFi → [SSID Name]
+2. Check "Broadcasting APs" section
+3. Either:
+   - Change to "All" for all APs
+   - Or select specific APs that should broadcast this SSID
+4. Save and wait 30-60 seconds for provisioning
+```
+
+**Prevention:**
+- When creating SSIDs, explicitly verify Broadcasting APs setting
+- Document which SSIDs should broadcast on which APs
+
+---
+
 ### Key Issues Encountered
 
 **Issue:** tailscaled won't start  

@@ -45,11 +45,13 @@ INTERNET
 
 ### Access Points
 
-| Name | IP | Switch Port | Location | SSIDs |
-|------|-----|-------------|----------|-------|
-| AP-Upstairs | 192.168.1.145 | Port 1 | Office/Upstairs | HomeNet, IoT |
-| AP-Downstairs | 192.168.1.146 | Port 2 | Downstairs | HomeNet, IoT |
-| AP-Neighbor | 192.168.1.147 | Port 4 | Neighbor Garage | Neighbor |
+| Name | IP | MAC Address | Switch Port | Location | SSIDs |
+|------|-----|-------------|-------------|----------|-------|
+| AP-Upstairs | 192.168.1.143 | - | Port 1 | Office/Upstairs | HomeNet, IoT |
+| AP-Downstairs | 192.168.1.142 | 6c:63:f8:6b:9f:e5 | Port 2 | Downstairs | HomeNet, IoT |
+| AP-Neighbor | 192.168.1.141 | - | Port 4 | Neighbor Garage | Neighbor |
+
+**Note:** AP IPs are assigned via DHCP from the default VLAN. They may change after reboot unless static DHCP reservations are configured.
 
 ## 📍 Complete IP Address Registry
 
@@ -301,6 +303,8 @@ ebtables -t broute -L
 
 ## 📝 Recent Network Changes
 
+- **2025-12-03:** Fixed HomeNet SSID broadcasting (was only AP-Downstairs, now both APs)
+- **2025-12-03:** Updated AP IP addresses in documentation (DHCP assigned)
 - **2025-12-03:** Added Tailscale static route (100.64.0.0/10 → Tailscale_GW)
 - **2025-12-03:** Configured Tailscale DNS (Pi-hole + homelab.local search domain)
 - **2025-11-28:** Deployed UniFi WiFi infrastructure (3 APs, 3 SSIDs)
@@ -319,6 +323,16 @@ ebtables -t broute -L
 - **Symptom:** .homelab.local domains don't resolve when ProtonVPN is connected
 - **Workaround:** Disconnect ProtonVPN when accessing homelab remotely
 - **Alternative:** Configure ProtonVPN split tunneling to exclude Tailscale
+
+### UniFi SSID Not Visible on Some APs (RESOLVED 2025-12-03)
+- **Issue:** SSID configured but not broadcasting from all expected APs
+- **Symptom:** WiFi network visible in one location but not another
+- **Cause:** SSID "Broadcasting APs" set to "Specific" with only some APs selected
+- **Fix:** 
+  1. UniFi Controller → Settings → WiFi → [SSID Name]
+  2. Check "Broadcasting APs" section
+  3. Change to "All" or select all intended APs under "Specific"
+  4. Save and wait 30-60 seconds for provisioning
 
 ### UniFi AP ebtables DROP rules
 - **Issue:** APs may add ebtables rules that block VLAN traffic

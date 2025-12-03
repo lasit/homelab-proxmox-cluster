@@ -75,6 +75,7 @@ ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.lo
 
 | Date | Change | Impact |
 |------|--------|--------|
+| 2025-12-03 | Fixed HomeNet SSID not broadcasting from AP-Upstairs | HomeNet now visible from all locations |
 | 2025-12-03 | Added OPNsense static route for Tailscale (100.64.0.0/10) | Enables return traffic for Tailscale clients |
 | 2025-12-03 | Configured Tailscale DNS (Pi-hole + homelab.local) | .homelab.local domains resolve remotely |
 | 2025-12-02 | Rack migration completed | All hardware in new rack |
@@ -82,9 +83,10 @@ ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.lo
 
 ## 📝 Next Actions
 
-1. **Consider:** ProtonVPN split tunneling to allow both VPNs simultaneously
-2. **Monitor:** Tailscale DNS performance over time
-3. **Document:** Update GitHub repository with latest changes
+1. **Consider:** Static DHCP reservations for APs in OPNsense to prevent IP changes
+2. **Consider:** ProtonVPN split tunneling to allow both VPNs simultaneously
+3. **Monitor:** Tailscale DNS performance over time
+4. **Document:** Update GitHub repository with latest changes
 
 ## 🔧 OPNsense Configuration Reference
 
