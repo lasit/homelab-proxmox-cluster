@@ -1,8 +1,8 @@
 # 💾 Backup & Recovery Strategy
 
-**Last Updated:** 2025-11-24  
+**Last Updated:** 2025-12-05  
 **Purpose:** Comprehensive backup strategy and disaster recovery procedures  
-**Storage:** Mac Pro NAS with 9.1TB capacity via SSHFS
+**Storage:** G-Drive USB-C (10TB) connected to pve1
 
 ## 📚 Table of Contents
 
@@ -23,15 +23,15 @@
 ```bash
 # Quick health check
 ssh root@192.168.10.11 << 'EOF'
-echo "=== Backup Status ==="
-df -h /mnt/macpro | tail -1
+echo "=== Backup Storage ==="
+df -h /mnt/backup-storage | tail -1
 echo ""
 echo "=== Last Backup ==="
-ls -lht /mnt/macpro/proxmox-backups/dump/ | head -3
+ls -lht /mnt/backup-storage/proxmox-backups/dump/ | head -5
 echo ""
 echo "=== Container Coverage ==="
-for ct in 100 101 102 103 104 105 112; do
-  count=$(ls /mnt/macpro/proxmox-backups/dump/*-$ct-* 2>/dev/null | wc -l)
+for ct in 100 101 102 103 104 105 106 107 112; do
+  count=$(ls /mnt/backup-storage/proxmox-backups/dump/*-$ct-* 2>/dev/null | wc -l)
   echo "CT$ct: $count backups"
 done
 EOF
@@ -40,11 +40,11 @@ EOF
 ### Manual Backup Commands
 ```bash
 # Single container
-vzdump <CTID> --storage macpro-backups --mode snapshot --compress zstd
+vzdump <CTID> --storage backup-gdrive --mode snapshot --compress zstd
 
 # All containers
-for ct in 100 101 102 103 104 105 112; do
-  vzdump $ct --storage macpro-backups --mode snapshot --compress zstd
+for ct in 100 101 102 103 104 105 106 107 112; do
+  vzdump $ct --storage backup-gdrive --mode snapshot --compress zstd
 done
 ```
 
@@ -52,7 +52,7 @@ done
 ```bash
 # Quick restore (destroys existing!)
 pct destroy <CTID>
-pct restore <CTID> /mnt/macpro/proxmox-backups/dump/vzdump-lxc-<CTID>-<DATE>.tar.zst
+pct restore <CTID> /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-<CTID>-<DATE>.tar.zst
 pct start <CTID>
 ```
 
@@ -78,9 +78,10 @@ pct start <CTID>
 | 104 | Nextcloud | ~2.1GB | ~25s | Critical |
 | 105 | MariaDB | ~850MB | ~15s | Critical |
 | 106 | Redis | ~150MB | ~8s | Low (not operational) |
+| 107 | UniFi Controller | ~500MB | ~10s | High |
 | 112 | n8n | ~980MB | ~14s | Medium |
 
-**Total Daily Backup:** ~6.5GB compressed (~11GB uncompressed)  
+**Total Daily Backup:** ~7GB compressed (~12GB uncompressed)  
 **Backup Window:** ~2-3 minutes total
 
 ### Retention Policy (Proxmox Built-in)
@@ -91,12 +92,12 @@ prune-backups: keep-daily=7,keep-weekly=4,keep-monthly=6
 
 | Retention Type | Count | Period | Storage Used |
 |---------------|-------|--------|--------------|
-| Daily | 7 | Last 7 days | ~45GB |
-| Weekly | 4 | Last 4 weeks | ~26GB |
-| Monthly | 6 | Last 6 months | ~39GB |
-| **Total** | ~119 backups | | **~110GB** |
+| Daily | 7 | Last 7 days | ~50GB |
+| Weekly | 4 | Last 4 weeks | ~28GB |
+| Monthly | 6 | Last 6 months | ~42GB |
+| **Total** | ~17 copies per CT | | **~120GB** |
 
-**Storage Available:** 9,090GB (1.2% used)
+**Storage Available:** 8,600GB (1.4% used)
 
 ---
 
@@ -105,53 +106,70 @@ prune-backups: keep-daily=7,keep-weekly=4,keep-monthly=6
 ### Storage Backend
 
 ```
-┌─────────────────┐
-│  Proxmox Nodes  │
-│   (3 nodes)     │
-└────────┬────────┘
-         │ SSHFS Mount
-         │ 192.168.30.20:/storage
-         ↓
-┌─────────────────┐
-│   Mac Pro NAS   │
-│  Ubuntu 22.04   │
-│  192.168.30.20  │
-└────────┬────────┘
-         │ Thunderbolt
-         ↓
-┌─────────────────┐
-│ Pegasus R6 Array│
-│     9.1TB       │
-│  /storage mount │
-└─────────────────┘
+┌─────────────────────┐
+│   Proxmox Cluster   │
+│   (all CTs on pve1) │
+└─────────┬───────────┘
+          │ Local write
+          │ /mnt/backup-storage
+          ↓
+┌─────────────────────┐
+│   G-Drive USB-C     │
+│   10TB (9.1TB raw)  │
+│   ext4 filesystem   │
+│   Connected to pve1 │
+└─────────────────────┘
 ```
 
 ### Mount Configuration
 
-**Per-Node SSHFS Mount:** `/etc/systemd/system/mnt-macpro.mount`
+**Systemd Mount Unit:** `/etc/systemd/system/mnt-backup\x2dstorage.mount`
 ```ini
 [Unit]
-Description=Mac Pro Storage via SSHFS
-After=network.target
+Description=G-Drive Backup Storage
+After=local-fs.target
 
 [Mount]
-What=xavier@192.168.30.20:/storage
-Where=/mnt/macpro
-Type=fuse.sshfs
-Options=_netdev,allow_other,IdentityFile=/root/.ssh/id_rsa,reconnect,ServerAliveInterval=15
+What=/dev/disk/by-label/backup-storage
+Where=/mnt/backup-storage
+Type=ext4
+Options=defaults,nofail
 
 [Install]
 WantedBy=multi-user.target
 ```
 
+### Storage Details
+
+| Property | Value |
+|----------|-------|
+| Device | /dev/sda1 |
+| Label | backup-storage |
+| UUID | 6a9c5424-d6b0-48f7-a4d1-8d64de4e20d3 |
+| Filesystem | ext4 |
+| Mount Point | /mnt/backup-storage |
+| Proxmox Storage ID | backup-gdrive |
+
 ### Backup Flow
 
-1. **02:00 Daily:** Cron triggers backup job
+1. **02:00 Daily:** pvescheduler triggers backup job
 2. **VZDump:** Creates snapshot of container filesystem
 3. **Compression:** ZSTD compression applied
-4. **Transfer:** Written to /mnt/macpro/proxmox-backups/dump/
+4. **Write:** Saved to /mnt/backup-storage/proxmox-backups/dump/
 5. **Verification:** Backup completion logged
 6. **Pruning:** Old backups removed per retention policy
+
+### Why Local USB vs Network Storage?
+
+Previous setup used Mac Pro + Pegasus array via SSHFS. Changed to local USB because:
+
+| Aspect | Mac Pro + Pegasus | G-Drive on pve1 |
+|--------|-------------------|-----------------|
+| Power | ~340W | ~5W |
+| Complexity | High (SSHFS, Thunderbolt, stex driver) | Low (USB mount) |
+| Noise | Significant | Silent |
+| Failure modes | Network, SSH, driver timing | USB only |
+| All CTs on pve1 | Required network transfer | Direct local write |
 
 ---
 
@@ -170,10 +188,10 @@ pct enter <CTID>  # Check if accessible
 pct stop <CTID> --kill
 
 # 3. List available backups
-ls -lht /mnt/macpro/proxmox-backups/dump/vzdump-lxc-<CTID>-*.zst
+ls -lht /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-<CTID>-*.zst
 
 # 4. Choose most recent backup
-BACKUP_FILE=$(ls -t /mnt/macpro/proxmox-backups/dump/vzdump-lxc-<CTID>-*.zst | head -1)
+BACKUP_FILE=$(ls -t /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-<CTID>-*.zst | head -1)
 echo "Using backup: $BACKUP_FILE"
 
 # 5. Destroy failed container (CAUTION: Data loss!)
@@ -197,7 +215,7 @@ pct exec <CTID> -- systemctl status
 ```bash
 # Restore Pi-hole
 pct destroy 101
-pct restore 101 /mnt/macpro/proxmox-backups/dump/vzdump-lxc-101-[LATEST].tar.zst
+pct restore 101 /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-101-[LATEST].tar.zst
 pct start 101
 
 # Fix DNS entry (known issue)
@@ -213,7 +231,7 @@ nslookup google.com 192.168.40.53
 # IMPORTANT: Restore database first!
 # 1. Restore MariaDB
 pct destroy 105
-pct restore 105 /mnt/macpro/proxmox-backups/dump/vzdump-lxc-105-[LATEST].tar.zst
+pct restore 105 /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-105-[LATEST].tar.zst
 pct start 105
 
 # 2. Wait for database to be ready
@@ -221,7 +239,7 @@ sleep 30
 
 # 3. Then restore Nextcloud
 pct destroy 104
-pct restore 104 /mnt/macpro/proxmox-backups/dump/vzdump-lxc-104-[LATEST].tar.zst
+pct restore 104 /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-104-[LATEST].tar.zst
 pct start 104
 
 # 4. Verify connectivity
@@ -232,7 +250,7 @@ pct exec 104 -- mysql -h 192.168.40.32 -u nextcloud -p[password] -e "SHOW DATABA
 ```bash
 # Restore Tailscale
 pct destroy 100
-pct restore 100 /mnt/macpro/proxmox-backups/dump/vzdump-lxc-100-[LATEST].tar.zst
+pct restore 100 /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-100-[LATEST].tar.zst
 pct start 100
 
 # May need to re-authenticate
@@ -241,14 +259,28 @@ pct exec 100 -- tailscale status
 pct exec 100 -- tailscale up --advertise-routes=192.168.10.0/24,192.168.40.0/24
 ```
 
+#### UniFi Controller (CT107)
+```bash
+# Restore UniFi
+pct destroy 107
+pct restore 107 /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-107-[LATEST].tar.zst
+pct start 107
+
+# Wait for service to start
+sleep 60
+
+# Verify controller accessible
+curl -k https://192.168.40.40:8443
+```
+
 ### Batch Recovery (All Containers)
 
 ```bash
 #!/bin/bash
 # Restore all containers from latest backups
 
-CONTAINERS="100 101 102 103 104 105 112"
-BACKUP_DIR="/mnt/macpro/proxmox-backups/dump"
+CONTAINERS="100 101 102 103 104 105 106 107 112"
+BACKUP_DIR="/mnt/backup-storage/proxmox-backups/dump"
 
 for CTID in $CONTAINERS; do
     echo "=== Restoring CT$CTID ==="
@@ -294,7 +326,7 @@ pct list
 
 # Determine which container to test (rotate monthly)
 MONTH=$(date +%m)
-CONTAINERS=(100 101 102 103 104 105 112)
+CONTAINERS=(100 101 102 103 104 105 107 112)
 INDEX=$((($MONTH - 1) % ${#CONTAINERS[@]}))
 TEST_CTID=${CONTAINERS[$INDEX]}
 TEST_ID=999  # Test restore ID
@@ -304,7 +336,7 @@ echo "Date: $(date)"
 echo "Testing: CT$TEST_CTID"
 
 # Find latest backup
-BACKUP=$(ls -t /mnt/macpro/proxmox-backups/dump/vzdump-lxc-$TEST_CTID-*.zst | head -1)
+BACKUP=$(ls -t /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-$TEST_CTID-*.zst | head -1)
 echo "Backup: $BACKUP"
 
 # Test restore to ID 999
@@ -326,13 +358,13 @@ echo "Test complete - CT$TEST_CTID restore successful"
 
 ```bash
 # Verify backup integrity
-vzdump --storage macpro-backups --verify
+tar -tzf /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-<CTID>-<DATE>.tar.zst > /dev/null && echo "OK"
 
 # Check backup contents (without restoring)
-tar -tzf /mnt/macpro/proxmox-backups/dump/vzdump-lxc-<CTID>-<DATE>.tar.zst | head -20
+tar -tzf /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-<CTID>-<DATE>.tar.zst | head -20
 
-# Verify compression ratio
-ls -lh /mnt/macpro/proxmox-backups/dump/vzdump-lxc-<CTID>-*.zst
+# Check storage mount
+systemctl status 'mnt-backup\x2dstorage.mount'
 ```
 
 ### Recovery Time Objectives (RTO)
@@ -340,63 +372,74 @@ ls -lh /mnt/macpro/proxmox-backups/dump/vzdump-lxc-<CTID>-*.zst
 | Service | Target RTO | Actual RTO | Priority |
 |---------|------------|------------|----------|
 | Tailscale | 5 min | 3 min | Critical |
-| Pi-hole | 10 min | 5 min | Critical |
-| Nextcloud + DB | 15 min | 10 min | High |
+| Pi-hole | 5 min | 3 min | Critical |
 | Nginx Proxy | 10 min | 5 min | High |
-| Uptime Kuma | 30 min | 5 min | Low |
-| n8n | 30 min | 5 min | Low |
+| Nextcloud | 15 min | 8 min | Critical |
+| UniFi | 10 min | 5 min | High |
 
 ---
 
-## 🚨 Disaster Recovery
+## 🔥 Disaster Recovery
 
-### Scenario: Complete Node Failure
+### Scenario: pve1 Node Failure
+
+Since all containers and backup storage are on pve1, this is the critical failure scenario.
 
 #### Phase 1: Assess Damage
 ```bash
-# Check which node failed
-for node in 11 12 13; do
-  ping -c 2 192.168.10.$node && echo "pve$node UP" || echo "pve$node DOWN"
-done
+# From laptop, check if pve1 responds
+ping 192.168.10.11
+
+# Check other nodes
+ping 192.168.10.12
+ping 192.168.10.13
 
 # Check cluster status from working node
-ssh root@192.168.10.<working-node> "pvecm status"
+ssh root@192.168.10.12 "pvecm status"
 ```
 
-#### Phase 2: Restore Quorum (If Needed)
-```bash
-# If only 1 node remains
-pvecm expected 1
+#### Phase 2: Recovery Options
 
-# If 2 nodes remain
-pvecm expected 2
-```
+**Option A: pve1 recoverable (hardware OK, OS issue)**
+1. Boot pve1 from Proxmox USB installer in rescue mode
+2. Check if /mnt/backup-storage accessible
+3. Repair OS or reinstall Proxmox
+4. Remount G-Drive
+5. Restore containers from backups
 
-#### Phase 3: Migrate Services (If Node Recoverable)
+**Option B: pve1 hardware failure**
+1. Connect G-Drive to pve2 or pve3
+2. Mount the drive:
+   ```bash
+   mkdir -p /mnt/backup-storage
+   mount /dev/sda1 /mnt/backup-storage
+   ```
+3. Add as Proxmox storage:
+   ```bash
+   pvesm add dir backup-gdrive --path /mnt/backup-storage/proxmox-backups --content backup
+   ```
+4. Restore containers to working node
+
+#### Phase 3: Restore Critical Services
 ```bash
-# From working node, restore containers
-for CTID in 100 101 102 103 104 105 112; do
-  BACKUP=$(ls -t /mnt/macpro/proxmox-backups/dump/vzdump-lxc-$CTID-*.zst | head -1)
-  pct restore $CTID "$BACKUP" --target <working-node>
+# On the working node
+for CTID in 101 100 102; do  # Pi-hole, Tailscale, NPM first
+  BACKUP=$(ls -t /mnt/backup-storage/proxmox-backups/dump/vzdump-lxc-$CTID-*.zst | head -1)
+  pct restore $CTID "$BACKUP"
   pct start $CTID
 done
 ```
 
-#### Phase 4: Rebuild Failed Node
-1. Reinstall Proxmox VE
-2. Configure network (VLANs)
-3. Rejoin cluster: `pvecm add 192.168.10.11`
-4. Configure Ceph OSDs
-5. Rebalance containers
+### Scenario: G-Drive Failure
 
-### Scenario: Mac Pro NAS Failure
+The G-Drive is a single point of failure for backups (not for live data - that's on Ceph).
 
 #### Immediate Actions
 ```bash
-# 1. Stop backup jobs
+# 1. Disable backup job temporarily
 pvesh set /cluster/backup/backup-6963fa17-187b --enabled 0
 
-# 2. Use local storage temporarily
+# 2. Use local storage for emergency backups
 for CTID in 100 101; do  # Critical containers only
   vzdump $CTID --storage local --mode snapshot --compress zstd
 done
@@ -404,26 +447,22 @@ done
 
 #### Recovery Options
 
-**Option 1: Repair Mac Pro**
-1. Boot from Ubuntu USB
-2. Check Pegasus array
-3. Remount storage
-4. Restore SSH keys from nodes
+**Option 1: Replace G-Drive**
+1. Connect new USB drive to pve1
+2. Format as ext4 with label `backup-storage`
+3. Systemd mount should auto-activate
+4. Re-enable backup job
 
-**Option 2: Temporary USB Backup**
+**Option 2: Temporary NFS from pve2/pve3**
 ```bash
-# On any Proxmox node
-mkdir -p /mnt/usb-backup
-mount /dev/sdb1 /mnt/usb-backup
+# On pve2, share local storage
+apt install nfs-kernel-server
+echo "/var/lib/vz/dump *(rw,sync,no_subtree_check)" >> /etc/exports
+exportctl -ra
 
-# Add as Proxmox storage
-pvesm add dir usb-backup --path /mnt/usb-backup --content backup
-```
-
-**Option 3: Use Ceph for Backups**
-```bash
-# Reconfigure backup to Ceph (limited space!)
-pvesh set /cluster/backup/backup-6963fa17-187b --storage vm-storage
+# On pve1, mount it
+mount -t nfs 192.168.10.12:/var/lib/vz/dump /mnt/temp-backup
+pvesm add dir temp-backup --path /mnt/temp-backup --content backup
 ```
 
 ### Scenario: Complete Cluster Failure
@@ -435,17 +474,13 @@ pvesh set /cluster/backup/backup-6963fa17-187b --storage vm-storage
    - Check switch configuration
    - Confirm VLANs active
 
-2. **Storage Backend**
-   - Boot Mac Pro NAS
-   - Verify Pegasus mount
-   - Check backup availability
-
-3. **First Proxmox Node**
+2. **First Proxmox Node (pve1 preferred)**
    - Install Proxmox VE
-   - Configure networking
+   - Configure networking (VLANs)
+   - Connect and mount G-Drive
    - Create new cluster
 
-4. **Critical Services**
+3. **Critical Services**
    ```bash
    # Restore in order
    pct restore 101 /path/to/backup  # Pi-hole (DNS)
@@ -453,16 +488,16 @@ pvesh set /cluster/backup/backup-6963fa17-187b --storage vm-storage
    pct restore 102 /path/to/backup  # NPM (Routing)
    ```
 
-5. **Additional Nodes**
+4. **Additional Nodes**
    - Install Proxmox VE
    - Join cluster
    - Configure Ceph
 
-6. **Remaining Services**
+5. **Remaining Services**
    - Restore remaining containers
    - Verify all services
 
-**Total Recovery Time:** 4-6 hours
+**Total Recovery Time:** 2-4 hours
 
 ---
 
@@ -470,44 +505,37 @@ pvesh set /cluster/backup/backup-6963fa17-187b --storage vm-storage
 
 ### Daily Tasks (Automated)
 ```bash
-# Runs at 02:00 via cron
-/usr/bin/vzdump --all --storage macpro-backups --mode snapshot --compress zstd
+# Runs at 02:00 via pvescheduler
+# Job ID: backup-6963fa17-187b
 ```
 
 ### Weekly Tasks
 ```bash
 # Check backup storage usage
-df -h /mnt/macpro
+df -h /mnt/backup-storage
 
 # Verify latest backups exist
-for ct in 100 101 102 103 104 105 112; do
+for ct in 100 101 102 103 104 105 106 107 112; do
   echo -n "CT$ct: "
-  ls -t /mnt/macpro/proxmox-backups/dump/*-$ct-* | head -1
+  ls -t /mnt/backup-storage/proxmox-backups/dump/*-$ct-* 2>/dev/null | head -1
 done
 ```
 
 ### Monthly Tasks
 ```bash
-# 1. Run restore test
-/usr/local/bin/monthly-restore-test.sh
+# 1. Run restore test (see Monthly Restore Test section)
 
 # 2. Check backup sizes for anomalies
-cd /mnt/macpro/proxmox-backups/dump/
-ls -lhS | head -20
+ls -lhS /mnt/backup-storage/proxmox-backups/dump/ | head -20
 
 # 3. Verify retention policy working
-for ct in 100 101 102 103 104 105 112; do
-  count=$(ls *-$ct-* 2>/dev/null | wc -l)
+for ct in 100 101 102 103 104 105 106 107 112; do
+  count=$(ls /mnt/backup-storage/proxmox-backups/dump/*-$ct-* 2>/dev/null | wc -l)
   echo "CT$ct has $count backups"
 done
-```
 
-### Quarterly Tasks
-```bash
-# 1. Full disaster recovery test
-# 2. Review and adjust retention policy
-# 3. Calculate growth rate
-# 4. Plan storage expansion if needed
+# 4. Check drive health
+smartctl -a /dev/sda
 ```
 
 ---
@@ -518,17 +546,29 @@ done
 
 #### Mount Not Available
 ```bash
-# Check mount
-df -h /mnt/macpro
+# Check mount status
+systemctl status 'mnt-backup\x2dstorage.mount'
+
+# Check if drive is detected
+lsblk | grep sda
 
 # Restart mount
-systemctl restart mnt-macpro.mount
+systemctl restart 'mnt-backup\x2dstorage.mount'
 
-# Verify Mac Pro accessible
-ssh xavier@192.168.30.20 "df -h /storage"
+# Verify mounted
+df -h /mnt/backup-storage
+```
 
-# Manual mount if needed
-sshfs xavier@192.168.30.20:/storage /mnt/macpro
+#### USB Drive Not Detected
+```bash
+# Check dmesg for USB issues
+dmesg | tail -30 | grep -i usb
+
+# Check if drive is present
+lsblk
+
+# Try reconnecting USB cable
+# Check for loose connection
 ```
 
 #### Container Locked During Backup
@@ -543,55 +583,20 @@ kill -9 <vzdump-pid>
 pct unlock <CTID>
 
 # Retry backup
-vzdump <CTID> --storage macpro-backups --mode snapshot
+vzdump <CTID> --storage backup-gdrive --mode snapshot
 ```
 
 #### Insufficient Space
 ```bash
 # Check space
-df -h /mnt/macpro
+df -h /mnt/backup-storage
 
 # Force prune old backups
-pvesh create /nodes/pve1/storage/macpro-backups/prunebackups
+pvesh create /nodes/pve1/storage/backup-gdrive/prunebackups
 
 # Emergency: Delete oldest backups manually
-cd /mnt/macpro/proxmox-backups/dump/
+cd /mnt/backup-storage/proxmox-backups/dump/
 ls -t | tail -20 | xargs rm
-```
-
-### Restore Failures
-
-#### Backup File Corrupted
-```bash
-# Test backup integrity
-tar -tzf backup.tar.zst > /dev/null
-
-# If corrupted, find previous good backup
-for backup in $(ls -t /path/to/backups/*.zst); do
-  echo "Testing: $backup"
-  tar -tzf "$backup" > /dev/null 2>&1 && echo "GOOD" && break
-done
-```
-
-#### CTID Already Exists
-```bash
-# Option 1: Destroy existing
-pct destroy <CTID>
-
-# Option 2: Restore to different ID
-pct restore <NEW-ID> /path/to/backup.tar.zst
-
-# Option 3: Restore to different node
-pct restore <CTID> /path/to/backup.tar.zst --target pve2
-```
-
-#### Storage Not Ready
-```bash
-# Wait for Ceph if needed
-watch ceph -s
-
-# Check storage status
-pvesm status
 ```
 
 ---
@@ -605,8 +610,8 @@ pvesm status
 | Backup Success Rate | 100% | 100% | ✅ |
 | Average Backup Time | <5 min | 2.5 min | ✅ |
 | Compression Ratio | >50% | 60% | ✅ |
-| Storage Used | <500GB | 110GB | ✅ |
-| Restore Test Success | 100% | 100% | ✅ |
+| Storage Used | <500GB | <1GB | ✅ |
+| Restore Test Success | 100% | TBD | ⏳ |
 | Recovery Time (Critical) | <10 min | 5 min | ✅ |
 
 ### Monitoring Commands
@@ -617,17 +622,17 @@ tail -50 /var/log/pve/tasks/index | grep vzdump
 # Monitor backup progress (live)
 tail -f /var/log/pve/tasks/active
 
-# Check backup job history
-pvesh get /cluster/backup/backup-6963fa17-187b
+# Check scheduler status
+systemctl status pvescheduler
 ```
 
 ---
 
-## 📝 3-2-1 Backup Rule Compliance
+## 🔐 3-2-1 Backup Rule Compliance
 
 ### Current Status
-- ✅ **3 copies:** Original + Ceph + Mac Pro backup
-- ⚠️ **2 media types:** Ceph (NVMe) + Mac Pro (HDD) - Same location
+- ✅ **3 copies:** Original (Ceph) + G-Drive backup
+- ⚠️ **2 media types:** NVMe (Ceph) + HDD (G-Drive) - Same location
 - ❌ **1 offsite:** Not yet implemented
 
 ### Future Improvements
@@ -635,20 +640,12 @@ pvesh get /cluster/backup/backup-6963fa17-187b
 1. **Offsite Backup (Priority)**
    - Option 1: Backblaze B2 ($5/TB/month)
    - Option 2: Relative's house with Raspberry Pi
-   - Option 3: Cloud provider (Wasabi/AWS)
+   - Option 3: Rotate second USB drive offsite monthly
 
-2. **Backup Encryption**
+2. **Drive Health Monitoring**
    ```bash
-   # Add encryption to sensitive backups
-   vzdump <CTID> --storage macpro-backups --encrypt
-   ```
-
-3. **Automated Verification**
-   ```bash
-   # Daily verification script
-   for backup in $(find /mnt/macpro -name "*.zst" -mtime -1); do
-     tar -tzf "$backup" > /dev/null || echo "CORRUPTED: $backup"
-   done
+   # Add to cron weekly
+   smartctl -H /dev/sda | grep -i health
    ```
 
 ---
@@ -666,26 +663,14 @@ pvesh get /cluster/backup/backup-6963fa17-187b
 - [ ] Test functionality
 - [ ] Document incident
 
-### Node Recovery
-- [ ] Assess cluster health
-- [ ] Adjust quorum if needed
-- [ ] Migrate/restore containers
-- [ ] Rebuild failed node
+### Node Recovery (pve1)
+- [ ] Assess if hardware or software issue
+- [ ] If hardware: move G-Drive to another node
+- [ ] Restore critical services first (Pi-hole, Tailscale, NPM)
+- [ ] Rebuild pve1 or replace hardware
 - [ ] Rejoin to cluster
-- [ ] Rebalance services
-- [ ] Verify Ceph health
+- [ ] Move containers back if desired
 - [ ] Update documentation
-
-### Full Disaster Recovery
-- [ ] Verify network infrastructure
-- [ ] Boot backup storage
-- [ ] Rebuild first node
-- [ ] Create new cluster
-- [ ] Restore critical services
-- [ ] Add additional nodes
-- [ ] Restore all services
-- [ ] Verify functionality
-- [ ] Document lessons learned
 
 ---
 

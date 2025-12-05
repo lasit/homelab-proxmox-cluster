@@ -1,9 +1,9 @@
 # 📊 Current Homelab Status
 
-**Last Updated:** 2025-12-03  
+**Last Updated:** 2025-12-05  
 **Overall Health:** 🟢 Operational  
-**Uptime:** Stable after DNS-over-Tailscale fix  
-**Last Incident:** Tailscale DNS resolution fixed
+**Uptime:** Stable  
+**Last Change:** Backup storage migrated from Mac Pro to G-Drive
 
 ## 🚦 Quick Status
 
@@ -13,12 +13,11 @@
 | **Ceph Storage** | ✅ HEALTH_OK | 508GB available, 3x replication |
 | **Network** | ✅ Operational | All VLANs active, routing working |
 | **Containers** | ✅ 9/9 Running | All containers up (Redis service inactive) |
-| **Backups** | ✅ Automated | Daily 02:00, Mac Pro NAS mounted |
+| **Backups** | ✅ Automated | Daily 02:00, G-Drive on pve1 |
 | **Remote Access** | ✅ Active | Tailscale operational with DNS |
 | **DNS** | ✅ Working | Pi-hole operational, Tailscale DNS configured |
-| **Mac Pro NAS** | ✅ Operational | SSHFS mounted, Pegasus storage online |
 | **UniFi WiFi** | ✅ Operational | 3 APs, 3 SSIDs, controller on CT107 |
-| **UPS** | ✅ Protected | CyberPower 1600VA, 17% load, all systems monitored |
+| **UPS** | ✅ Protected | CyberPower 1600VA, ~17% load |
 
 ## 📋 UPS Status
 
@@ -30,35 +29,61 @@
 | **Battery** | 100% |
 | **Est. Runtime** | ~34-45 minutes |
 | **NUT Master** | pve1 (USB connected) |
-| **NUT Slaves** | pve2, pve3, Mac Pro |
-| **Uptime Kuma** | Push monitor (every 60s) |
+| **NUT Slaves** | pve2, pve3 |
 
 ### Protected Equipment
 - ✅ pve1, pve2, pve3 (NUT monitored)
 - ✅ OPNsense router
 - ✅ UniFi Switch
-- ✅ Mac Pro + Pegasus (NUT monitored)
+- ✅ G-Drive backup storage (connected to pve1)
 
 ### Quick UPS Check
 ```bash
 ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.load|battery.charge|battery.runtime):'"
 ```
 
+## 💾 Backup Storage
+
+| Property | Value |
+|----------|-------|
+| **Device** | G-Drive USB-C (10TB) |
+| **Model** | HGST HDH5C1010ALE604 |
+| **Connected to** | pve1 via USB-C |
+| **Mount Point** | /mnt/backup-storage |
+| **Proxmox Storage** | backup-gdrive |
+| **Capacity** | 9.1TB (8.6TB usable) |
+| **Current Usage** | ~230MB (test backup) |
+
+### Quick Backup Check
+```bash
+ssh root@192.168.10.11 "df -h /mnt/backup-storage && ls -lht /mnt/backup-storage/proxmox-backups/dump/ | head -5"
+```
+
 ## 🔴 Active Issues
 
-### 1. Mac Pro Pegasus Auto-Mount
-- **Impact:** Low - requires manual intervention after cold boot
-- **Cause:** Boot timing - Thunderbolt device not ready when systemd runs
-- **Workaround:** Run `sudo /usr/local/bin/mount-pegasus.sh` after boot
-- **Status:** Service is enabled, but timing issue persists
-
-### 2. ProtonVPN Blocks Tailscale DNS
+### 1. ProtonVPN Blocks Tailscale DNS
 - **Impact:** Low - only affects remote access with ProtonVPN active
 - **Cause:** ProtonVPN's DNS leak protection intercepts all DNS queries
 - **Workaround:** Disconnect ProtonVPN when accessing homelab remotely
 - **Status:** Known limitation, documented in troubleshooting guide
 
 ## 🟢 Recently Resolved
+
+### Backup Storage Migration (COMPLETED 2025-12-05)
+- **Change:** Migrated backup storage from Mac Pro + Pegasus to G-Drive USB-C
+- **Why:** Mac Pro was overkill for backup needs (~340W vs ~5W), complex Thunderbolt/stex driver issues
+- **Actions Taken:**
+  1. Unmounted SSHFS on all 3 nodes
+  2. Shutdown Mac Pro and Pegasus array
+  3. Connected G-Drive to pve1
+  4. Formatted as ext4 with label `backup-storage`
+  5. Created systemd mount at `/mnt/backup-storage`
+  6. Added to Proxmox as `backup-gdrive` storage
+  7. Updated backup job to use new storage
+  8. Added CT107 (UniFi) to backup job
+  9. Removed old `macpro-backups` storage
+  10. Removed SSHFS mount units from all nodes
+- **Status:** ✅ Fully operational, test backup successful
 
 ### DNS over Tailscale (RESOLVED 2025-12-03)
 - **Issue:** DNS queries to Pi-hole timed out when accessing homelab via Tailscale
@@ -75,18 +100,20 @@ ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.lo
 
 | Date | Change | Impact |
 |------|--------|--------|
+| 2025-12-05 | Migrated backup storage to G-Drive on pve1 | Simpler, lower power backup system |
+| 2025-12-05 | Retired Mac Pro + Pegasus array | Reduced power consumption ~335W |
+| 2025-12-05 | Added CT107 (UniFi) to backup job | All containers now backed up |
 | 2025-12-03 | Fixed HomeNet SSID not broadcasting from AP-Upstairs | HomeNet now visible from all locations |
 | 2025-12-03 | Added OPNsense static route for Tailscale (100.64.0.0/10) | Enables return traffic for Tailscale clients |
 | 2025-12-03 | Configured Tailscale DNS (Pi-hole + homelab.local) | .homelab.local domains resolve remotely |
 | 2025-12-02 | Rack migration completed | All hardware in new rack |
-| 2025-11-28 | UniFi WiFi deployment | 3 APs, 3 SSIDs operational |
 
 ## 📝 Next Actions
 
-1. **Consider:** Static DHCP reservations for APs in OPNsense to prevent IP changes
-2. **Consider:** ProtonVPN split tunneling to allow both VPNs simultaneously
-3. **Monitor:** Tailscale DNS performance over time
-4. **Document:** Update GitHub repository with latest changes
+1. **Monitor:** First automated backup to G-Drive tonight at 02:00
+2. **Document:** Update GitHub repository with latest changes
+3. **Consider:** Offsite backup solution (now that local backup is simpler)
+4. **Consider:** What to do with retired Mac Pro + Pegasus hardware
 
 ## 🔧 OPNsense Configuration Reference
 
@@ -128,4 +155,4 @@ ssh root@192.168.10.11 "upsc cyberpower@localhost | grep -E '^(ups.status|ups.lo
 ---
 
 *Update this file after any infrastructure changes*  
-*Last verified: 2025-12-03*
+*Last verified: 2025-12-05*

@@ -2,7 +2,7 @@
 
 Complete hardware inventory and specifications for the homelab cluster.
 
-Last Updated: 2025-11-28  
+Last Updated: 2025-12-05  
 Status: ✅ Verified via system audit
 
 ## 📊 Hardware Inventory
@@ -45,10 +45,25 @@ Status: ✅ Verified via system audit
 
 ### Storage Systems
 
-| System | Hardware | Capacity | Interface | IP | Purpose | Status |
-|--------|----------|----------|-----------|-----|---------|--------|
-| **Ceph Cluster** | 3× 500GB NVMe | 172GB usable | Internal | N/A | VM/Container storage | ✅ Active |
-| **Mac Pro NAS** | Late 2013 + Pegasus R6 | 9.1TB | Thunderbolt + SSHFS | 192.168.30.20 | Backup storage | ⚠️ Partial |
+| System | Hardware | Capacity | Interface | Location | Purpose | Status |
+|--------|----------|----------|-----------|----------|---------|--------|
+| **Ceph Cluster** | 3× 500GB NVMe | 172GB usable | Internal | Distributed | VM/Container storage | ✅ Active |
+| **G-Drive** | HGST 10TB USB-C | 9.1TB (8.6TB usable) | USB-C | Connected to pve1 | Backup storage | ✅ Active |
+
+### Retired Hardware
+
+| System | Hardware | Reason | Date Retired |
+|--------|----------|--------|--------------|
+| **Mac Pro NAS** | Late 2013 + Promise Pegasus R6 (9.1TB) | Overkill for backup needs, high power (~340W), complex Thunderbolt/stex driver issues | 2025-12-05 |
+
+### Power Protection
+
+| Device | Model | Specs | Connected To | Purpose | Status |
+|--------|-------|-------|--------------|---------|--------|
+| **UPS** | CyberPower CP1600EPFCLCD-AU | 1600VA/1000W | pve1 (USB) | Power protection | ✅ Active |
+
+**UPS Load:** ~142W (~17% capacity)  
+**Protected Equipment:** pve1, pve2, pve3, OPNsense, UniFi Switch, G-Drive
 
 ### Management Systems
 
@@ -88,7 +103,7 @@ Status: ✅ Verified via system audit
 | 12 | pve2 | Trunk (10,20,30,40) | ❌ | Cat6 | Node 2 | ✅ |
 | 13 | Pi (IoT) | Default | ✅ | Cat5e | Home Assistant | ✅ |
 | 14 | pve3 | Trunk (10,20,30,40) | ❌ | Cat6 | Node 3 | ✅ |
-| 15 | Mac Pro | Native VLAN 30 | ❌ | Cat6 | NAS storage | ✅ |
+| 15 | Empty | - | ❌ | - | Previously Mac Pro | ✅ |
 | 16 | Empty | - | ✅ | - | Available | - |
 
 **PoE Budget:** 45W total, ~35W used (3 APs + Pi), 10W available
@@ -144,17 +159,19 @@ Status: ✅ Verified via system audit
 | OPNsense | 15 | 20 | $3.60 | Protectli FW4C |
 | Switch | 10 | 15 | $2.16 | UniFi 16 PoE |
 | APs (×3) | 30 | 40 | $6.48 | ~10-13W each |
-| Mac Pro | 45 | 80 | $9.72 | With Pegasus array |
-| **Total** | **175W** | **290W** | **$38.16** | At $0.30/kWh |
+| G-Drive | 5 | 8 | $1.08 | USB-C external |
+| **Total** | **135W** | **218W** | **$29.52** | At $0.30/kWh |
 
-### UPS Requirements (Planned)
+*Power reduced by ~$8.64/month after retiring Mac Pro (~340W → 5W)*
 
-| Requirement | Specification | Notes |
-|-------------|--------------|-------|
-| Runtime | 30 minutes minimum | For graceful shutdown |
-| Capacity | 800VA minimum | Based on 175W idle |
-| Outlets | 6+ required | All critical infrastructure |
-| Network | USB or network card | For monitoring |
+### UPS Configuration
+
+| Requirement | Specification | Actual | Notes |
+|-------------|--------------|--------|-------|
+| Runtime | 30 minutes minimum | ~40 min | At current load |
+| Capacity | 800VA minimum | 1600VA | CyberPower CP1600EPFCLCD |
+| Outlets | 6+ required | 6 battery | All critical connected |
+| Monitoring | USB | ✅ NUT on pve1 | Cluster-aware shutdown |
 
 ## 📡 Remote Access
 
@@ -172,17 +189,16 @@ Status: ✅ Verified via system audit
 
 ## 🔧 Physical Layout
 
-### Rack Organization (Future)
+### Rack Organization
 ```
-[Not yet rack-mounted - desktop deployment]
+Current 16U Rack Configuration:
 
-Planned 6U configuration:
-U6: [ Patch Panel ]
-U5: [ UniFi Switch ]
-U4: [ OPNsense Router ]
-U3: [ HP Elite Mini Shelf - 3 nodes ]
-U2: [ UPS Unit ]
-U1: [ Mac Pro NAS ]
+U6: [ Patch Panel / Cable Management ]
+U5: [ UniFi Switch Lite 16 PoE ]
+U4: [ OPNsense Router (Protectli FW4C) ]
+U3: [ HP Elite Mini Shelf - pve1, pve2, pve3 ]
+U2: [ CyberPower UPS ]
+U1: [ G-Drive USB-C (connected to pve1) ]
 ```
 
 ### Cable Management
@@ -202,6 +218,7 @@ U1: [ Mac Pro NAS ]
 | Protectli FW4C | Nov 2025 | Nov 2026 | 1-year warranty |
 | UniFi Switch | Oct 2025 | Oct 2026 | 1-year warranty |
 | UniFi U6+ ×3 | Nov 2025 | Nov 2027 | 2-year warranty |
+| G-Drive 10TB | Dec 2025 | Dec 2027 | 2-year warranty |
 
 ### Firmware Versions
 | Device | Current Version | Last Updated | Notes |
@@ -215,4 +232,4 @@ U1: [ Mac Pro NAS ]
 ---
 
 *For service-specific details, see [services.md](./services.md)*  
-*For network design philosophy, see [architecture/network-design.md](../architecture/network-design.md)*
+*For backup procedures, see [backup-recovery.md](./backup-recovery.md)*

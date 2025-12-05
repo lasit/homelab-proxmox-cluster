@@ -2,8 +2,8 @@
 
 # Daily Health Check Script for Proxmox Homelab
 # Run this each morning to verify all systems operational
-# Version: 1.1
-# Last Updated: 2025-12-02
+# Version: 1.2
+# Last Updated: 2025-12-05
 
 # Color codes for output
 RED='\033[0;31m'
@@ -25,8 +25,9 @@ CRITICAL_SERVICES=(
     "192.168.40.40:UniFi-Controller"
     "192.168.40.61:n8n"
 )
-MAC_PRO_IP="192.168.30.20"
-BACKUP_DIR="/mnt/macpro/proxmox-backups/dump"
+PRIMARY_NODE="192.168.10.11"
+BACKUP_MOUNT="/mnt/backup-storage"
+BACKUP_DIR="/mnt/backup-storage/proxmox-backups/dump"
 
 # UPS Configuration
 UPS_NAME="cyberpower"
@@ -50,7 +51,7 @@ print_header() {
 }
 
 check_pass() {
-    echo -e "${GREEN}✓${NC} $1"
+    echo -e "${GREEN}✔${NC} $1"
     ((TOTAL_CHECKS++))
     ((PASSED_CHECKS++))
 }
@@ -84,7 +85,7 @@ section_header "UPS Power Protection"
 
 # Check UPS status from pve1
 echo -n "UPS Connection: "
-UPS_DATA=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@192.168.10.11 "upsc $UPS_NAME@$UPS_HOST 2>/dev/null" 2>/dev/null)
+UPS_DATA=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@$PRIMARY_NODE "upsc $UPS_NAME@$UPS_HOST 2>/dev/null" 2>/dev/null)
 
 if [ ! -z "$UPS_DATA" ]; then
     check_pass "Connected to NUT server"
@@ -215,18 +216,13 @@ echo -n "DNS Resolution (Pi-hole): "
 if nslookup google.com 192.168.40.53 &>/dev/null; then
     check_pass "Working"
 else
-    check_warn "Pi-hole DNS not working, trying fallback"
-    if nslookup google.com 192.168.10.1 &>/dev/null; then
-        check_warn "Fallback DNS working (OPNsense)"
-    else
-        check_fail "All DNS failed!"
-    fi
+    check_fail "DNS resolution failed"
 fi
 
 # ═══════════════════════════════════════════════════════════════
 # SECTION 3: Proxmox Cluster
 # ═══════════════════════════════════════════════════════════════
-section_header "Proxmox Cluster Status"
+section_header "Proxmox Cluster"
 
 # Check each node
 for node_ip in $MANAGEMENT_IPS; do
@@ -234,106 +230,74 @@ for node_ip in $MANAGEMENT_IPS; do
     echo -n "Node pve$((node_name-10)) ($node_ip): "
     
     if ping -c 1 -W 1 $node_ip &>/dev/null; then
-        # Try to get node status via SSH
-        if timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "pvesh get /nodes/pve$((node_name-10))/status" &>/dev/null; then
-            check_pass "Online and responsive"
-        else
-            check_warn "Ping OK but SSH/API not responding"
-        fi
+        check_pass "Responding"
     else
-        check_fail "Not responding"
+        check_fail "Not responding - Node down!"
     fi
 done
 
-# Check cluster quorum (from first responsive node)
+# Check cluster quorum
 echo -n "Cluster Quorum: "
-QUORUM_OK=false
 for node_ip in $MANAGEMENT_IPS; do
-    if timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "pvecm status 2>/dev/null | grep -q 'Quorate:.*Yes'" 2>/dev/null; then
-        check_pass "Established"
-        QUORUM_OK=true
+    if QUORUM=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "pvecm status 2>/dev/null | grep -i 'quorate'" 2>/dev/null); then
+        if echo "$QUORUM" | grep -qi "yes"; then
+            check_pass "Established"
+        else
+            check_fail "NOT QUORATE!"
+        fi
         break
     fi
 done
-if [ "$QUORUM_OK" = false ]; then
-    check_fail "No quorum - check cluster!"
-fi
 
-# Check Ceph health (if quorum OK)
-if [ "$QUORUM_OK" = true ]; then
-    echo -n "Ceph Storage: "
-    CEPH_STATUS=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@192.168.10.11 "ceph health 2>/dev/null" 2>/dev/null || echo "UNKNOWN")
-    
-    case "$CEPH_STATUS" in
-        *HEALTH_OK*)
+# Check Ceph health
+echo -n "Ceph Status: "
+for node_ip in $MANAGEMENT_IPS; do
+    if CEPH=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "ceph health 2>/dev/null" 2>/dev/null); then
+        if echo "$CEPH" | grep -qi "HEALTH_OK"; then
             check_pass "HEALTH_OK"
-            ;;
-        *HEALTH_WARN*)
-            check_warn "HEALTH_WARN - Check details"
-            ;;
-        *HEALTH_ERR*)
-            check_fail "HEALTH_ERR - Immediate attention needed!"
-            ;;
-        *)
-            check_warn "Unable to determine Ceph status"
-            ;;
-    esac
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# SECTION 4: Service Containers
-# ═══════════════════════════════════════════════════════════════
-section_header "Service Containers"
-
-# Get container status from first responsive node
-CONTAINERS_OK=0
-CONTAINERS_TOTAL=0
-
-for node_ip in $MANAGEMENT_IPS; do
-    if ping -c 1 -W 1 $node_ip &>/dev/null; then
-        for ct_id in $SERVICE_CONTAINERS; do
-            ((CONTAINERS_TOTAL++))
-            ct_status=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "pct status $ct_id 2>/dev/null" 2>/dev/null || echo "unknown")
-            
-            case "$ct_id" in
-                100) SERVICE_NAME="Tailscale" ;;
-                101) SERVICE_NAME="Pi-hole" ;;
-                102) SERVICE_NAME="Nginx-Proxy" ;;
-                103) SERVICE_NAME="Uptime-Kuma" ;;
-                104) SERVICE_NAME="Nextcloud" ;;
-                105) SERVICE_NAME="MariaDB" ;;
-                107) SERVICE_NAME="UniFi-Controller" ;;
-                112) SERVICE_NAME="n8n" ;;
-                *) SERVICE_NAME="Unknown" ;;
-            esac
-            
-            echo -n "CT$ct_id ($SERVICE_NAME): "
-            
-            if [[ "$ct_status" == *"running"* ]]; then
-                check_pass "Running"
-                ((CONTAINERS_OK++))
-            elif [[ "$ct_status" == *"stopped"* ]]; then
-                check_fail "Stopped"
-            else
-                check_warn "Status unknown"
-            fi
-        done
+        elif echo "$CEPH" | grep -qi "HEALTH_WARN"; then
+            check_warn "$CEPH"
+        else
+            check_fail "$CEPH"
+        fi
         break
     fi
 done
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 5: Service Availability
+# SECTION 4: Container Status
+# ═══════════════════════════════════════════════════════════════
+section_header "Container Status"
+
+for node_ip in $MANAGEMENT_IPS; do
+    CONTAINERS=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "pct list 2>/dev/null" 2>/dev/null)
+    if [ ! -z "$CONTAINERS" ]; then
+        RUNNING=$(echo "$CONTAINERS" | grep -c "running")
+        STOPPED=$(echo "$CONTAINERS" | grep -c "stopped")
+        TOTAL=$((RUNNING + STOPPED))
+        
+        echo -n "Containers on pve$(($(echo $node_ip | cut -d. -f4)-10)): "
+        if [ $STOPPED -eq 0 ]; then
+            check_pass "$RUNNING running"
+        else
+            check_warn "$RUNNING running, $STOPPED stopped"
+        fi
+    fi
+done
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 5: Service Accessibility
 # ═══════════════════════════════════════════════════════════════
 section_header "Service Accessibility"
 
 for service in "${CRITICAL_SERVICES[@]}"; do
-    IFS=':' read -r ip name <<< "$service"
+    ip=$(echo $service | cut -d: -f1)
+    name=$(echo $service | cut -d: -f2)
+    
     echo -n "$name ($ip): "
     
-    # First try ping
     if ping -c 1 -W 1 $ip &>/dev/null; then
-        # Then try HTTP if it's a web service
+        # Test HTTP for web services
         case "$name" in
             Pi-hole|Nginx-Proxy|Uptime-Kuma|Nextcloud|n8n|UniFi-Controller)
                 # Get appropriate port
@@ -368,31 +332,17 @@ done
 # ═══════════════════════════════════════════════════════════════
 section_header "Storage & Backup"
 
-# Check Mac Pro NAS
-echo -n "Mac Pro NAS ($MAC_PRO_IP): "
-if ping -c 1 -W 1 $MAC_PRO_IP &>/dev/null; then
-    check_pass "Responding"
+# Check G-Drive backup storage (on pve1)
+echo -n "G-Drive Backup Storage: "
+if ssh -o ConnectTimeout=3 -o BatchMode=yes root@$PRIMARY_NODE "df -h $BACKUP_MOUNT 2>/dev/null | grep -q backup-storage" 2>/dev/null; then
+    STORAGE_INFO=$(ssh -o ConnectTimeout=3 -o BatchMode=yes root@$PRIMARY_NODE "df -h $BACKUP_MOUNT 2>/dev/null | tail -1 | awk '{print \$3\" used of \"\$2\" (\"\$5\" full)\"}'" 2>/dev/null)
+    check_pass "Mounted - $STORAGE_INFO"
 else
-    # Check if mount exists on any node
-    MOUNT_OK=false
-    for node_ip in $MANAGEMENT_IPS; do
-        if ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "df -h | grep -q macpro" 2>/dev/null; then
-            check_pass "Mount verified on pve$(($(echo $node_ip | cut -d. -f4)-10))"
-            MOUNT_OK=true
-            break
-        fi
-    done
-    if [ "$MOUNT_OK" = false ]; then
-        check_fail "Not mounted on any node"
+    if ssh -o ConnectTimeout=3 -o BatchMode=yes root@$PRIMARY_NODE "systemctl is-active 'mnt-backup\x2dstorage.mount' >/dev/null 2>&1" 2>/dev/null; then
+        check_warn "Mount service active but not showing in df"
+    else
+        check_fail "Not mounted! Run: systemctl start 'mnt-backup\x2dstorage.mount'"
     fi
-fi
-
-# Check Mac Pro NUT client
-echo -n "Mac Pro NUT Monitor: "
-if ssh -o ConnectTimeout=3 -o BatchMode=yes xavier@$MAC_PRO_IP "systemctl is-active nut-monitor 2>/dev/null" 2>/dev/null | grep -q "active"; then
-    check_pass "Running"
-else
-    check_warn "Not verified (may not respond to ping)"
 fi
 
 # Check backup recency
@@ -400,20 +350,11 @@ echo -n "Recent Backups: "
 TODAY=$(date +%Y_%m_%d)
 YESTERDAY=$(date -d "yesterday" +%Y_%m_%d)
 
-BACKUP_FOUND=false
-for node_ip in $MANAGEMENT_IPS; do
-    if ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "ls $BACKUP_DIR/*$TODAY* 2>/dev/null | head -1" &>/dev/null; then
-        check_pass "Today's backup found"
-        BACKUP_FOUND=true
-        break
-    elif ssh -o ConnectTimeout=3 -o BatchMode=yes root@$node_ip "ls $BACKUP_DIR/*$YESTERDAY* 2>/dev/null | head -1" &>/dev/null; then
-        check_warn "Yesterday's backup found (today's pending)"
-        BACKUP_FOUND=true
-        break
-    fi
-done
-
-if [ "$BACKUP_FOUND" = false ]; then
+if ssh -o ConnectTimeout=3 -o BatchMode=yes root@$PRIMARY_NODE "ls $BACKUP_DIR/*$TODAY* 2>/dev/null | head -1" &>/dev/null; then
+    check_pass "Today's backup found"
+elif ssh -o ConnectTimeout=3 -o BatchMode=yes root@$PRIMARY_NODE "ls $BACKUP_DIR/*$YESTERDAY* 2>/dev/null | head -1" &>/dev/null; then
+    check_warn "Yesterday's backup found (today's pending)"
+else
     check_fail "No recent backups found!"
 fi
 
@@ -533,9 +474,9 @@ if [ $FAILED_CHECKS -gt 0 ] || [ $WARNINGS -gt 0 ]; then
         echo -e "${YELLOW}  • Consider running verify-state.sh for details${NC}"
     fi
 else
-    echo -e "${GREEN}  ✓ All systems operational!${NC}"
-    echo -e "${GREEN}  ✓ UPS protection active${NC}"
-    echo -e "${GREEN}  ✓ No action required${NC}"
+    echo -e "${GREEN}  ✔ All systems operational!${NC}"
+    echo -e "${GREEN}  ✔ UPS protection active${NC}"
+    echo -e "${GREEN}  ✔ No action required${NC}"
 fi
 
 echo ""
