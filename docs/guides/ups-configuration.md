@@ -1,6 +1,6 @@
 # 🔋 UPS Configuration Guide
 
-**Last Updated:** 2025-12-02  
+**Last Updated:** 2025-12-07  
 **UPS Model:** CyberPower CP1600EPFCLCD-AU  
 **Monitoring Software:** NUT (Network UPS Tools) 2.8.1  
 **Status:** ✅ Fully Operational
@@ -326,22 +326,23 @@ echo "$(date): Stopping containers..."
 for ct in 112 107 106 104 105 103 102 101 100; do
     if pct status $ct 2>/dev/null | grep -q running; then
         echo "$(date): Stopping CT$ct..."
-        pct shutdown $ct --timeout 30 2>/dev/null || pct stop $ct 2>/dev/null
+        pct shutdown $ct --timeout 30
     fi
 done
 echo "$(date): Containers stopped"
 
-# Step 3: Unmount SSHFS backup storage
-echo "$(date): Unmounting backup storage..."
-umount /mnt/macpro 2>/dev/null
-echo "$(date): Storage unmounted"
+# Step 3: Unmount SSHFS if present
+if mountpoint -q /mnt/nas-storage 2>/dev/null; then
+    echo "$(date): Unmounting NAS storage..."
+    umount /mnt/nas-storage
+fi
 
-# Step 4: Proceed with shutdown
+# Step 4: Shutdown
 echo "$(date): Initiating system shutdown"
 /sbin/shutdown -h +0
 ```
 
-### Why Cluster-Aware?
+### Why This Matters
 
 1. **Ceph Flags** - Prevents Ceph from marking OSDs as "out" and starting unnecessary rebalancing
 2. **Container Order** - Stops containers in reverse dependency order for clean shutdown
@@ -446,27 +447,133 @@ for ct in 112 107 106 104 105 103 102 101 100; do
 done
 ```
 
+### Test 5: Full System Verification
+
+Run this comprehensive check from pve1 to verify everything is working:
+
+```bash
+echo "=== NUT Status ==="
+upsc cyberpower@localhost ups.status battery.charge ups.load battery.runtime
+
+echo -e "\n=== NUT Slaves Connectivity ==="
+for node in 12 13; do
+  echo -n "pve$((node-10)): "
+  ssh root@192.168.10.$node "upsc cyberpower@192.168.10.11 ups.status 2>/dev/null || echo 'FAILED'"
+done
+
+echo -e "\n=== Proxmox Cluster Status ==="
+pvecm status | grep -E "Cluster|Quorum|Name|Node"
+
+echo -e "\n=== Ceph Health ==="
+ceph -s | head -15
+
+echo -e "\n=== Container Status ==="
+pct list
+
+echo -e "\n=== Key Services Ping ==="
+for svc in "Pi-hole:192.168.40.53" "Nginx:192.168.40.22" "Uptime-Kuma:192.168.40.23" "Nextcloud:192.168.40.31" "Tailscale:192.168.40.10"; do
+  name="${svc%%:*}"
+  ip="${svc##*:}"
+  echo -n "$name: "
+  ping -c1 -W2 $ip >/dev/null 2>&1 && echo "OK" || echo "FAILED"
+done
+
+echo -e "\n=== Push Script Test ==="
+/usr/local/bin/ups-monitor-push.sh && echo "Push script: OK" || echo "Push script: FAILED"
+```
+
 ---
 
 ## Troubleshooting
 
+### Common Issues Quick Reference
+
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| "Data stale" | Driver lost USB sync | `systemctl restart nut-driver.target` |
+| "Driver not connected" | Driver crashed or restarting | Wait 5s, retry; if persists restart driver |
+| "UPS not responding" in Kuma | NUT or network issue | Check NUT first, then network |
+| Connection refused | upsd not running | `systemctl restart nut-server` |
+| Authentication failed | Password mismatch | Compare upsd.users and upsmon.conf |
+
+### Data Stale Error
+
+**Symptom:**
+```
+upsc cyberpower@localhost
+Init SSL without certificate database
+Error: Data stale
+```
+
+**Cause:** The NUT driver lost synchronization with the UPS. This commonly happens after:
+- Network disruptions (e.g., unplugging internet/switch)
+- USB glitches
+- System suspend/resume
+- Power fluctuations
+
+**Fix:**
+```bash
+# Verify USB connection is still present
+lsusb | grep -i cyber
+
+# Restart the driver
+systemctl restart nut-driver.target
+
+# Wait a few seconds, then verify
+sleep 5
+upsc cyberpower@localhost ups.status
+```
+
+### Driver Not Connected Error
+
+**Symptom:**
+```
+upsc cyberpower@localhost
+Init SSL without certificate database
+Error: Driver not connected
+```
+
+**Cause:** The driver service hasn't fully initialized yet, or failed to start.
+
+**Fix:**
+```bash
+# Check driver status
+systemctl status nut-driver@cyberpower
+
+# Look for errors
+journalctl -u nut-driver@cyberpower --since "5 minutes ago"
+
+# If needed, restart
+systemctl restart nut-driver.target
+
+# Wait and verify
+sleep 5
+upsc cyberpower@localhost
+```
+
 ### UPS Not Detected
 
+**Symptom:** `lsusb` doesn't show CyberPower device.
+
+**Fix:**
 ```bash
 # Check USB connection
 lsusb | grep -i cyber
 
-# Check driver status
-systemctl status nut-driver@cyberpower
+# If not found, check dmesg for USB errors
+dmesg | tail -20 | grep -i usb
 
-# Restart driver
+# Try unplugging and replugging USB cable
+# Then restart driver
 systemctl restart nut-driver.target
 ```
 
 ### Connection Refused
 
+**Symptom:** Slaves can't connect to master.
+
 ```bash
-# Check upsd is listening
+# On pve1: Check upsd is listening
 ss -tlnp | grep 3493
 
 # Check upsd.conf LISTEN directives
@@ -478,25 +585,77 @@ systemctl restart nut-server
 
 ### Authentication Failed
 
+**Symptom:** "Authentication failed" when querying UPS.
+
 ```bash
 # Verify password in upsd.users matches upsmon.conf
 grep password /etc/nut/upsd.users
 grep MONITOR /etc/nut/upsmon.conf
+
+# Passwords must match exactly
 ```
 
 ### Slave Not Receiving Updates
 
+**Symptom:** pve2/pve3 can't query UPS status.
+
 ```bash
-# Check firewall on pve1
+# From slave, test connectivity
+nc -zv 192.168.10.11 3493
+
+# Check firewall on pve1 (shouldn't be needed on Proxmox)
 iptables -L -n | grep 3493
 
-# Test network connectivity
-nc -zv 192.168.10.11 3493
+# Verify upsd is listening on correct interface
+ss -tlnp | grep 3493
 ```
+
+### Uptime Kuma Shows "UPS not responding"
+
+**Diagnostic steps:**
+
+1. **Check if NUT is working:**
+   ```bash
+   ssh root@192.168.10.11 "upsc cyberpower@localhost ups.status"
+   ```
+   - If this fails → Fix NUT first (see above)
+   - If this works → Continue to step 2
+
+2. **Test the push script:**
+   ```bash
+   ssh root@192.168.10.11 "/usr/local/bin/ups-monitor-push.sh"
+   ```
+
+3. **Check network to Uptime Kuma:**
+   ```bash
+   ssh root@192.168.10.11 "curl -s http://192.168.40.23:3001/api/push/ZMQELu5DML?status=up&msg=test"
+   ```
+
+4. **Check cron is running:**
+   ```bash
+   ssh root@192.168.10.11 "systemctl status cron"
+   ssh root@192.168.10.11 "cat /etc/cron.d/ups-monitor"
+   ```
 
 ### SSL Certificate Warning
 
 The "Init SSL without certificate database" message is informational and can be ignored. NUT works fine without SSL for local network monitoring.
+
+### After Network Disruptions
+
+If you've had network issues (unplugged cables, router restart, etc.), NUT may need a kick:
+
+```bash
+# On pve1, restart all NUT services in order
+systemctl restart nut-driver.target
+sleep 3
+systemctl restart nut-server
+sleep 2
+systemctl restart nut-monitor
+
+# Verify
+upsc cyberpower@localhost ups.status
+```
 
 ---
 
@@ -724,6 +883,37 @@ shutdown -c
 # Manual graceful cluster shutdown
 /usr/local/bin/cluster-shutdown.sh
 ```
+
+### Quick Fixes
+
+```bash
+# Fix "Data stale" or "Driver not connected"
+systemctl restart nut-driver.target
+
+# Fix connection issues to slaves
+systemctl restart nut-server
+
+# Full NUT restart sequence
+systemctl restart nut-driver.target && sleep 3 && systemctl restart nut-server && sleep 2 && systemctl restart nut-monitor
+```
+
+---
+
+## Incident Log
+
+### 2025-12-07: Data Stale After Network Disruption
+
+**Symptom:** Uptime Kuma showed "UPS not responding" starting at 10:10. Running `upsc cyberpower@localhost` returned "Error: Data stale".
+
+**Cause:** Internet was unplugged earlier, causing network disruption. The NUT driver lost sync with the UPS.
+
+**Resolution:**
+1. Verified USB still connected: `lsusb | grep -i cyber` ✓
+2. Restarted driver: `systemctl restart nut-driver.target`
+3. Waited 5 seconds, verified: `upsc cyberpower@localhost` ✓
+4. Full system verification confirmed all services operational
+
+**Lesson:** After any network disruption, check NUT status and restart `nut-driver.target` if needed.
 
 ---
 
