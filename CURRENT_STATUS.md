@@ -1,9 +1,9 @@
 # 📊 Current Homelab Status
 
-**Last Updated:** 2025-12-05  
+**Last Updated:** 2025-12-07  
 **Overall Health:** 🟢 Operational  
 **Uptime:** Stable  
-**Last Change:** Backup storage migrated from Mac Pro to G-Drive
+**Last Change:** IoT WiFi migration completed, Pi moved to wired Ethernet
 
 ## 🚦 Quick Status
 
@@ -16,8 +16,9 @@
 | **Backups** | ✅ Automated | Daily 02:00, G-Drive on pve1 |
 | **Remote Access** | ✅ Active | Tailscale operational with DNS |
 | **DNS** | ✅ Working | Pi-hole operational, Tailscale DNS configured |
-| **UniFi WiFi** | ✅ Operational | 3 APs, 3 SSIDs, controller on CT107 |
+| **UniFi WiFi** | ✅ Operational | 3 APs, 4 SSIDs, controller on CT107 |
 | **UPS** | ✅ Protected | CyberPower 1600VA, ~17% load |
+| **ISP WiFi** | 🔴 Disabled | All devices migrated to UniFi |
 
 ## 📋 UPS Status
 
@@ -69,51 +70,62 @@ ssh root@192.168.10.11 "df -h /mnt/backup-storage && ls -lht /mnt/backup-storage
 
 ## 🟢 Recently Resolved
 
+### ISP WiFi Migration (COMPLETED 2025-12-07)
+- **Change:** Migrated all IoT devices from ISP router WiFi to UniFi WiFi
+- **Why:** Consolidate all WiFi under UniFi management, prepare to disable ISP WiFi
+- **Actions Taken:**
+  1. Created new WiFi SSID "iiNetBC09FB" on VLAN 60 (IoT) matching ISP credentials
+  2. Configured WPA2 security with 2.4GHz + 5GHz bands
+  3. Broadcast from AP-Upstairs and AP-Downstairs
+  4. Disabled ISP WiFi networks
+  5. All IoT devices automatically reconnected to new UniFi network
+- **Status:** ✅ All devices migrated successfully
+
+### Pi (pifrontdoor) Wired Migration (COMPLETED 2025-12-07)
+- **Change:** Moved Home Assistant Pi from WiFi to wired Ethernet
+- **Why:** More reliable connection, WiFi no longer needed
+- **Previous Config:** WiFi on ISP network (10.1.1.63 static)
+- **New Config:** Wired Ethernet on Default VLAN (192.168.1.146 DHCP reserved)
+- **Actions Taken:**
+  1. Disabled WiFi interface (wlan0) on Home Assistant OS
+  2. Enabled Ethernet interface (enu1u1u1) with DHCP
+  3. Connected via passive switch on Port 7
+  4. Created DHCP reservation in OPNsense (MAC: B8:27:EB:01:E3:C3)
+  5. Updated Tailscale advertised routes to include 192.168.1.0/24
+  6. Verified remote access via Tailscale
+- **Access:** http://192.168.1.146:8123 or http://pifrontdoor.local:8123
+- **Status:** ✅ Fully operational, accessible locally and via Tailscale
+
 ### Backup Storage Migration (COMPLETED 2025-12-05)
 - **Change:** Migrated backup storage from Mac Pro + Pegasus to G-Drive USB-C
 - **Why:** Mac Pro was overkill for backup needs (~340W vs ~5W), complex Thunderbolt/stex driver issues
-- **Actions Taken:**
-  1. Unmounted SSHFS on all 3 nodes
-  2. Shutdown Mac Pro and Pegasus array
-  3. Connected G-Drive to pve1
-  4. Formatted as ext4 with label `backup-storage`
-  5. Created systemd mount at `/mnt/backup-storage`
-  6. Added to Proxmox as `backup-gdrive` storage
-  7. Updated backup job to use new storage
-  8. Added CT107 (UniFi) to backup job
-  9. Removed old `macpro-backups` storage
-  10. Removed SSHFS mount units from all nodes
 - **Status:** ✅ Fully operational, test backup successful
 
 ### DNS over Tailscale (RESOLVED 2025-12-03)
 - **Issue:** DNS queries to Pi-hole timed out when accessing homelab via Tailscale
-- **Root Cause:** Two issues:
-  1. OPNsense had no route for Tailscale return traffic (100.64.0.0/10)
-  2. Tailscale DNS settings not configured to use Pi-hole
-- **Solution:** 
-  1. Added static route in OPNsense: 100.64.0.0/10 → Tailscale_GW (192.168.40.10)
-  2. Configured Tailscale admin DNS: Pi-hole as nameserver, homelab.local as search domain
-  3. Enabled "Override DNS servers" in Tailscale admin
+- **Solution:** Added static route in OPNsense + configured Tailscale admin DNS
 - **Status:** ✅ Fully working (when ProtonVPN disconnected)
 
 ## 🔄 Recent Changes
 
 | Date | Change | Impact |
 |------|--------|--------|
+| 2025-12-07 | Migrated IoT devices to UniFi WiFi (iiNetBC09FB SSID) | ISP WiFi can now be disabled |
+| 2025-12-07 | Moved Pi (pifrontdoor) to wired Ethernet | More reliable Home Assistant connection |
+| 2025-12-07 | Added 192.168.1.0/24 to Tailscale routes | Remote access to Default VLAN devices |
+| 2025-12-07 | Created DHCP reservation for pifrontdoor | Static IP 192.168.1.146 |
+| 2025-12-07 | Disabled ISP WiFi networks | All WiFi now managed by UniFi |
 | 2025-12-05 | Migrated backup storage to G-Drive on pve1 | Simpler, lower power backup system |
 | 2025-12-05 | Retired Mac Pro + Pegasus array | Reduced power consumption ~335W |
-| 2025-12-05 | Added CT107 (UniFi) to backup job | All containers now backed up |
 | 2025-12-03 | Fixed HomeNet SSID not broadcasting from AP-Upstairs | HomeNet now visible from all locations |
-| 2025-12-03 | Added OPNsense static route for Tailscale (100.64.0.0/10) | Enables return traffic for Tailscale clients |
 | 2025-12-03 | Configured Tailscale DNS (Pi-hole + homelab.local) | .homelab.local domains resolve remotely |
-| 2025-12-02 | Rack migration completed | All hardware in new rack |
 
 ## 📝 Next Actions
 
-1. **Monitor:** First automated backup to G-Drive tonight at 02:00
-2. **Document:** Update GitHub repository with latest changes
-3. **Consider:** Offsite backup solution (now that local backup is simpler)
-4. **Consider:** What to do with retired Mac Pro + Pegasus hardware
+1. **Optional:** Add Pi-hole DNS entry for pifrontdoor.homelab.local → 192.168.1.146
+2. **Monitor:** Verify all IoT devices remain connected to new WiFi
+3. **Consider:** Adding Home Assistant to Uptime Kuma monitoring
+4. **Future:** Plan Home Assistant migration to Proxmox cluster
 
 ## 🔧 OPNsense Configuration Reference
 
@@ -128,15 +140,29 @@ ssh root@192.168.10.11 "df -h /mnt/backup-storage && ls -lht /mnt/backup-storage
 |-------------|---------|-------------|
 | 100.64.0.0/10 | Tailscale_GW | Tailscale CGNAT return traffic |
 
-## 🌐 Tailscale DNS Configuration
+### DHCP Static Mappings (Services → DHCPv4 → LAN)
+| MAC Address | IP Address | Hostname | Description |
+|-------------|------------|----------|-------------|
+| B8:27:EB:01:E3:C3 | 192.168.1.146 | pifrontdoor | Home Assistant Pi |
+
+## 🌐 Tailscale Configuration
 
 **Admin Panel:** https://login.tailscale.com/admin/dns
 
+### DNS Settings
 | Setting | Value |
 |---------|-------|
 | Global Nameserver | 192.168.40.53 (Pi-hole) |
 | Search Domain | homelab.local |
 | Override DNS servers | ✅ Enabled |
+
+### Advertised Routes (CT100)
+| Network | Purpose |
+|---------|---------|
+| 192.168.10.0/24 | Management VLAN |
+| 192.168.40.0/24 | Services VLAN |
+| 192.168.1.0/24 | Default VLAN (includes pifrontdoor) |
+| 10.1.1.0/24 | ISP network (legacy IoT) |
 
 ## 📊 Service Health
 
@@ -152,7 +178,23 @@ ssh root@192.168.10.11 "df -h /mnt/backup-storage && ls -lht /mnt/backup-storage
 | 107 | UniFi Controller | 192.168.40.40 | ✅ Running | Network management |
 | 112 | n8n | 192.168.40.61 | ✅ Running | Automation |
 
+## 🏠 Home Assistant (pifrontdoor)
+
+| Property | Value |
+|----------|-------|
+| **Hardware** | Raspberry Pi |
+| **OS** | Home Assistant OS 16.3 |
+| **HA Core** | 2025.12.1 |
+| **Connection** | Wired Ethernet (enu1u1u1) |
+| **IP Address** | 192.168.1.146 (DHCP reserved) |
+| **MAC Address** | B8:27:EB:01:E3:C3 |
+| **Switch Port** | Port 7 (via passive switch) |
+| **VLAN** | Default (1) |
+| **Access URL** | http://192.168.1.146:8123 |
+| **mDNS** | http://pifrontdoor.local:8123 |
+| **WiFi** | Disabled |
+
 ---
 
 *Update this file after any infrastructure changes*  
-*Last verified: 2025-12-05*
+*Last verified: 2025-12-07*

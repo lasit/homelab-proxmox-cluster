@@ -1,6 +1,6 @@
 # 🌐 Network Configuration Table
 
-**Last Updated:** 2025-12-03  
+**Last Updated:** 2025-12-07  
 **Status:** ✅ Operational  
 **Single Source of Truth for ALL Network Information**
 
@@ -9,12 +9,13 @@
 ```
 INTERNET
     │
-    └─► ISP Router (10.1.1.1)
+    └─► ISP Router (10.1.1.1) [WiFi DISABLED]
             │
             └─► OPNsense (WAN: 10.1.1.17)
                     │
                     └─► UniFi Switch (Trunk Port 3)
                             │
+                            ├─► VLAN 1: Default (192.168.1.0/24)
                             ├─► VLAN 10: Management (192.168.10.0/24)
                             ├─► VLAN 20: Corosync (192.168.20.0/24) [ISOLATED]
                             ├─► VLAN 30: Storage (192.168.30.0/24) [ISOLATED]
@@ -37,23 +38,38 @@ INTERNET
 
 ## 📡 WiFi Networks
 
-| SSID | VLAN | Network | Security | Broadcast APs | Purpose |
-|------|------|---------|----------|---------------|---------|
-| HomeNet | 40 | 192.168.40.0/24 | WPA2 | AP-Upstairs, AP-Downstairs | Trusted devices |
-| IoT | 60 | 192.168.60.0/24 | WPA2 | AP-Upstairs, AP-Downstairs | Smart home devices |
-| Neighbor | 50 | 192.168.50.0/24 | WPA2 | AP-Neighbor | Neighbor internet only |
+| SSID | VLAN | Network | Security | Broadcast APs | Purpose | Status |
+|------|------|---------|----------|---------------|---------|--------|
+| HomeNet | 40 | 192.168.40.0/24 | WPA2 | AP-Upstairs, AP-Downstairs | Trusted devices | ✅ Active |
+| IoT | 60 | 192.168.60.0/24 | WPA2 | AP-Upstairs, AP-Downstairs | Smart home devices | ✅ Active |
+| iiNetBC09FB | 60 | 192.168.60.0/24 | WPA2 | AP-Upstairs, AP-Downstairs | Migrated ISP IoT devices | ✅ Active |
+| Neighbor | 50 | 192.168.50.0/24 | WPA2 | AP-Neighbor | Neighbor internet only | ✅ Active |
+
+**Note:** iiNetBC09FB SSID uses same credentials as former ISP WiFi to allow seamless device migration.
 
 ### Access Points
 
 | Name | IP | MAC Address | Switch Port | Location | SSIDs |
 |------|-----|-------------|-------------|----------|-------|
-| AP-Upstairs | 192.168.1.143 | - | Port 1 | Office/Upstairs | HomeNet, IoT |
-| AP-Downstairs | 192.168.1.142 | 6c:63:f8:6b:9f:e5 | Port 2 | Downstairs | HomeNet, IoT |
+| AP-Upstairs | 192.168.1.143 | - | Port 1 | Office/Upstairs | HomeNet, IoT, iiNetBC09FB |
+| AP-Downstairs | 192.168.1.142 | 6c:63:f8:6b:9f:e5 | Port 2 | Downstairs | HomeNet, IoT, iiNetBC09FB |
 | AP-Neighbor | 192.168.1.141 | - | Port 4 | Neighbor Garage | Neighbor |
 
 **Note:** AP IPs are assigned via DHCP from the default VLAN. They may change after reboot unless static DHCP reservations are configured.
 
 ## 📍 Complete IP Address Registry
+
+### Default VLAN (192.168.1.0/24)
+| IP | Device | Hostname | Type | Notes |
+|----|--------|----------|------|-------|
+| .1 | OPNsense | gateway | Gateway | Router/Firewall |
+| .104 | UniFi Switch | - | Infrastructure | Core switch |
+| .141 | AP-Neighbor | - | WiFi | DHCP assigned |
+| .142 | AP-Downstairs | - | WiFi | DHCP assigned |
+| .143 | AP-Upstairs | - | WiFi | DHCP assigned |
+| .146 | pifrontdoor | pifrontdoor.local | Static DHCP | Home Assistant Pi |
+| .10-.140 | DHCP Pool | - | Dynamic | Available |
+| .147-.245 | DHCP Pool | - | Dynamic | Available |
 
 ### Management VLAN (192.168.10.0/24)
 | IP | Device | Hostname | Type | Notes |
@@ -79,7 +95,6 @@ INTERNET
 | .11 | pve1 | Ceph storage network | No gateway |
 | .12 | pve2 | Ceph storage network | No gateway |
 | .13 | pve3 | Ceph storage network | No gateway |
-| .20 | Mac Pro NAS | Backup storage | SSHFS mount |
 
 ### Services VLAN (192.168.40.0/24)
 | IP | Service | Container | Hostname | Port(s) | Status |
@@ -111,21 +126,21 @@ INTERNET
 | .1 | OPNsense | Gateway | Internet + DNS only |
 | .100-.200 | DHCP Pool | IoT WiFi clients | DNS to Pi-hole, internet allowed |
 
-### Legacy IoT Network (10.1.1.0/24) - ISP Network
-| IP | Device | Purpose | Integration |
-|----|--------|---------|-------------|
-| .1 | ISP Router | Gateway | NBN HFC |
-| .12 | ESP-01 | Shed alert | MQTT |
-| .15 | Roller Door | Garage control | Home Assistant |
-| .17 | OPNsense WAN | Router WAN interface | - |
-| .20 | Daikin AC | Living room climate | Home Assistant |
-| .46 | Reolink Cameras | Security | Home Assistant |
-| .60 | Xiaomi Gateway | Zigbee hub | Home Assistant |
-| .63 | pi-front-door | Home Assistant server | Main instance |
-| .67 | mqtt-broker | MQTT broker | Port 1883 |
-| .114 | ESP-02 | Shed alert | MQTT |
-| .174 | Fronius Inverter | Solar monitoring | Web interface |
-| .211 | Daikin AC | Bedroom climate | Home Assistant |
+**Migrated IoT Devices (now on 192.168.60.x via iiNetBC09FB SSID):**
+- Fronius Inverter (solar monitoring)
+- Daikin AC units
+- Reolink Cameras
+- Xiaomi Gateway
+- ESP devices
+- Other smart home devices
+
+### Legacy ISP Network (10.1.1.0/24) - MINIMAL USE
+| IP | Device | Purpose | Notes |
+|----|--------|---------|-------|
+| .1 | ISP Router | Gateway | NBN HFC, WiFi disabled |
+| .17 | OPNsense WAN | Router WAN interface | DHCP assigned |
+
+**Note:** Most devices previously on this network have been migrated to VLAN 60 (IoT) via the iiNetBC09FB SSID. ISP WiFi is now disabled.
 
 ## 📤 DNS Configuration
 
@@ -146,6 +161,8 @@ Current configuration in `/etc/pihole/pihole.toml`:
 | pihole.homelab.local | 192.168.40.22 | A Record | ✅ Correct |
 | unifi.homelab.local | 192.168.40.40 | A Record | ✅ Correct |
 
+**Optional:** Add `pifrontdoor.homelab.local → 192.168.1.146` for Home Assistant access via .homelab.local domain
+
 **DNS Resolution Flow:**
 1. Client queries Pi-hole (192.168.40.53)
 2. Pi-hole checks local entries
@@ -160,7 +177,7 @@ Configured at https://login.tailscale.com/admin/dns
 | Search Domain | homelab.local | Allows short names (e.g., `status` instead of `status.homelab.local`) |
 | Override DNS servers | ✅ Enabled | Forces Tailscale clients to use Pi-hole |
 
-## 📀 Routing Configuration
+## 🔀 Routing Configuration
 
 ### OPNsense Gateways (System → Gateways → Configuration)
 | Name | Interface | IP Address | Monitor | Description |
@@ -179,6 +196,7 @@ Configured at https://login.tailscale.com/admin/dns
 | Destination | Gateway | Interface | Notes |
 |-------------|---------|-----------|-------|
 | 0.0.0.0/0 | 10.1.1.1 | WAN | Default route |
+| 192.168.1.0/24 | * | LAN | Direct |
 | 192.168.10.0/24 | * | VLAN10 | Direct |
 | 192.168.20.0/24 | * | VLAN20 | Direct |
 | 192.168.30.0/24 | * | VLAN30 | Direct |
@@ -190,6 +208,7 @@ Configured at https://login.tailscale.com/admin/dns
 
 | Source VLAN | Can Access | Cannot Access |
 |-------------|------------|---------------|
+| Default (1) | All VLANs, Internet | - |
 | Management (10) | All VLANs, Internet | - |
 | Corosync (20) | Own VLAN only | All others, Internet |
 | Storage (30) | Own VLAN only | All others, Internet |
@@ -214,44 +233,48 @@ Configured at https://login.tailscale.com/admin/dns
 
 ## 📌 Switch Port Assignments
 
-| Port | Device | VLAN Config | PoE | Status |
-|------|--------|-------------|-----|--------|
-| 1 | AP-Upstairs | Trunk (All) | Yes | ✅ Active |
-| 2 | AP-Downstairs | Trunk (All) | Yes | ✅ Active |
-| 3 | OPNsense | Custom (10,20,30,40,50,60) | No | ✅ Active |
-| 4 | AP-Neighbor | Trunk (All) | Yes | ✅ Active |
-| 5 | Empty | - | No | Available |
-| 6 | Empty | - | Yes | Available |
-| 7-8 | Reserved | - | Yes | Future |
-| 9 | Ubuntu Laptop | Access (1) | No | ✅ Active |
-| 10 | pve1 | Trunk (1,10,20,30,40) | No | ✅ Active |
-| 11 | Empty | - | Yes | Available |
-| 12 | pve2 | Trunk (1,10,20,30,40) | No | ✅ Active |
-| 13 | Pi (IoT) | Access (1) | Yes | ✅ Active |
-| 14 | pve3 | Trunk (1,10,20,30,40) | No | ✅ Active |
-| 15 | Mac Pro NAS | Access (30) | No | ✅ Active |
-| 16 | Empty | - | Yes | Available |
+| Port | Device | VLAN Config | PoE | Status | Notes |
+|------|--------|-------------|-----|--------|-------|
+| 1 | AP-Upstairs | Trunk (All) | Yes | ✅ Active | UniFi U6+ |
+| 2 | AP-Downstairs | Trunk (All) | Yes | ✅ Active | UniFi U6+ |
+| 3 | OPNsense | Custom (10,20,30,40,50,60) | No | ✅ Active | Router uplink |
+| 4 | AP-Neighbor | Trunk (All) | Yes | ✅ Active | UniFi U6+ |
+| 5 | Empty | - | No | Available | - |
+| 6 | Empty | - | Yes | Available | - |
+| 7 | Passive Switch (Downstairs) | Access (1) | Yes | ✅ Active | pifrontdoor + other devices |
+| 8 | Reserved | - | Yes | Future | - |
+| 9 | Ubuntu Laptop | Access (1) | No | ✅ Active | Management |
+| 10 | pve1 | Trunk (1,10,20,30,40) | No | ✅ Active | Node 1 |
+| 11 | Empty | - | Yes | Available | - |
+| 12 | pve2 | Trunk (1,10,20,30,40) | No | ✅ Active | Node 2 |
+| 13 | Empty | - | Yes | Available | Previously Pi (IoT) |
+| 14 | pve3 | Trunk (1,10,20,30,40) | No | ✅ Active | Node 3 |
+| 15 | Empty | - | No | Available | Previously Mac Pro |
+| 16 | Empty | - | Yes | Available | - |
 
-**PoE Budget:** 45W total, ~35W used (3 APs + Pi), 10W available
+**PoE Budget:** 45W total, ~30W used (3 APs), 15W available
 
 **Critical Note:** Port 3 (OPNsense) must use **Custom** tagged VLAN selection, not "Allow All". When creating new VLANs, manually add them to Port 3's tagged list and restart the switch.
 
-## 🌐 External Access
+## 🌍 External Access
 
 ### Tailscale VPN Configuration
 | Device | Tailscale IP | Advertised Routes | Status |
 |--------|--------------|-------------------|--------|
-| Gateway (CT100) | 100.89.200.114 | 192.168.10.0/24, 192.168.40.0/24, 10.1.1.0/24 | ✅ Active |
+| Gateway (CT100) | 100.89.200.114 | 192.168.10.0/24, 192.168.40.0/24, 192.168.1.0/24, 10.1.1.0/24 | ✅ Active |
 | Laptop | 100.70.57.108 | None | ✅ Active |
 | Phone | 100.103.101.25 | None | ✅ Active |
+
+**Note:** 192.168.1.0/24 was added on 2025-12-07 to enable remote access to pifrontdoor (Home Assistant) on the Default VLAN.
 
 ### Internet Connection
 - **Type:** NBN HFC (50/20 Mbps)
 - **ISP Gateway:** 10.1.1.1
 - **OPNsense WAN:** 10.1.1.17 (DHCP)
 - **MTU:** 1500
+- **ISP WiFi:** Disabled (2025-12-07)
 
-## 📐 Network Standards & Best Practices
+## 📋 Network Standards & Best Practices
 
 ### IP Assignment Guidelines
 - .1-.9: Infrastructure (routers, gateways)
@@ -261,6 +284,7 @@ Configured at https://login.tailscale.com/admin/dns
 - .201-.254: Reserved for future use
 
 ### VLAN Numbering
+- 1: Default/Physical LAN
 - 10-19: Infrastructure
 - 20-29: Cluster-specific
 - 30-39: Storage
@@ -275,6 +299,7 @@ Configured at https://login.tailscale.com/admin/dns
 ping -c 1 192.168.10.1    # Management gateway
 ping -c 1 192.168.40.53   # Pi-hole DNS
 ping -c 1 192.168.60.1    # IoT gateway
+ping -c 1 192.168.1.146   # Home Assistant Pi
 
 # DNS tests
 nslookup google.com 192.168.40.53
@@ -299,22 +324,24 @@ ebtables -t broute -L
 
 # Verify Tailscale route on OPNsense
 # System → Routes → Configuration should show 100.64.0.0/10 → Tailscale_GW
+
+# Check Tailscale advertised routes
+pct exec 100 -- tailscale status
 ```
 
 ## 📝 Recent Network Changes
 
+- **2025-12-07:** Created iiNetBC09FB SSID on VLAN 60 for IoT device migration
+- **2025-12-07:** Disabled ISP WiFi networks (all devices migrated to UniFi)
+- **2025-12-07:** Moved pifrontdoor (Home Assistant) to wired Ethernet on Port 7
+- **2025-12-07:** Added 192.168.1.0/24 to Tailscale advertised routes
+- **2025-12-07:** Created DHCP reservation for pifrontdoor (192.168.1.146)
+- **2025-12-05:** Retired Mac Pro NAS (Port 15 now empty)
 - **2025-12-03:** Fixed HomeNet SSID broadcasting (was only AP-Downstairs, now both APs)
-- **2025-12-03:** Updated AP IP addresses in documentation (DHCP assigned)
 - **2025-12-03:** Added Tailscale static route (100.64.0.0/10 → Tailscale_GW)
 - **2025-12-03:** Configured Tailscale DNS (Pi-hole + homelab.local search domain)
 - **2025-11-28:** Deployed UniFi WiFi infrastructure (3 APs, 3 SSIDs)
 - **2025-11-28:** Created VLAN 60 (IoT) with isolation firewall rules
-- **2025-11-28:** Fixed Port 3 to use Custom VLAN selection (not "Allow All")
-- **2025-11-28:** Upgraded UniFi Controller to 10.0.160
-- **2025-11-25:** Fixed Pi-hole DNS entries
-- **2025-11-24:** Discovered Pi-hole DNS misconfiguration
-- **2025-11-16:** Switch port reorganization for PoE
-- **2025-11-12:** All VLANs configured and operational
 
 ## ⚠️ Known Issues & Workarounds
 
