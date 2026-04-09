@@ -169,7 +169,7 @@ https://192.168.40.40:8443        # UniFi Controller (direct)
 
 | Device | IP | Network | Notes |
 |--------|----|---------|-------|
-| Fronius Solar Inverter | 10.1.1.174 | ISP | Solar monitoring, battery level |
+| Fronius Solar Inverter | 192.168.40.107 | VLAN 40 (HomeNet WiFi) | Solar monitoring, web UI on port 80/443, MAC 78:C4:0E:B4:98:E4 |
 | Home Assistant | 192.168.1.146 | Default VLAN (wired) | Raspberry Pi, HA OS 16.3 |
 | MQTT Broker | 10.1.1.67 | ISP | Separate Pi |
 | Reolink NVR + 5 cameras | 10.1.1.46 | ISP | Security cameras |

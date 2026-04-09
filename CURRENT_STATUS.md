@@ -1,9 +1,9 @@
 # 📊 Current Homelab Status
 
-**Last Updated:** 2025-12-07  
+**Last Updated:** 2026-04-09  
 **Overall Health:** 🟢 Operational  
-**Uptime:** Stable  
-**Last Change:** IoT WiFi migration completed, Pi moved to wired Ethernet
+**Uptime:** All 3 nodes online, recovered from power outage  
+**Last Change:** Cluster recovered, Fronius inverter located and configured
 
 ## 🚦 Quick Status
 
@@ -110,6 +110,7 @@ ssh root@192.168.10.11 "df -h /mnt/backup-storage && ls -lht /mnt/backup-storage
 
 | Date | Change | Impact |
 |------|--------|--------|
+| 2026-04-09 | Fronius solar inverter (replacement) located at 192.168.40.107 on VLAN 40 | Web UI accessible, DHCP reservation created |
 | 2025-12-07 | Migrated IoT devices to UniFi WiFi (iiNetBC09FB SSID) | ISP WiFi can now be disabled |
 | 2025-12-07 | Moved Pi (pifrontdoor) to wired Ethernet | More reliable Home Assistant connection |
 | 2025-12-07 | Added 192.168.1.0/24 to Tailscale routes | Remote access to Default VLAN devices |
@@ -120,12 +121,24 @@ ssh root@192.168.10.11 "df -h /mnt/backup-storage && ls -lht /mnt/backup-storage
 | 2025-12-03 | Fixed HomeNet SSID not broadcasting from AP-Upstairs | HomeNet now visible from all locations |
 | 2025-12-03 | Configured Tailscale DNS (Pi-hole + homelab.local) | .homelab.local domains resolve remotely |
 
+## 🌞 Fronius Solar Inverter
+
+| Property | Value |
+|----------|-------|
+| **Model** | Fronius (replacement unit, same brand/model) |
+| **IP Address** | 192.168.40.107 (DHCP, reservation created in OPNsense) |
+| **MAC Address** | 78:C4:0E:B4:98:E4 (H&D Wireless WiFi module) |
+| **Network** | VLAN 40 (HomeNet WiFi) |
+| **Web UI** | http://192.168.40.107 (HTTP) or https://192.168.40.107 (HTTPS) |
+| **DNS** | solar.homelab.local (configured in Pi-hole) |
+| **Ports** | 80 (HTTP), 443 (HTTPS) |
+| **Previous IP** | 10.1.1.174 (old unit, ISP network) |
+
 ## 📝 Next Actions
 
-1. **Optional:** Add Pi-hole DNS entry for pifrontdoor.homelab.local → 192.168.1.146
-2. **Monitor:** Verify all IoT devices remain connected to new WiFi
-3. **Consider:** Adding Home Assistant to Uptime Kuma monitoring
-4. **Future:** Plan Home Assistant migration to Proxmox cluster
+1. **Monitor:** Verify Fronius inverter retains IP after DHCP lease renewal
+2. **Future:** Plan Home Assistant migration to Proxmox cluster
+3. **Consider:** Improve NUT shutdown script to handle "power returned during shutdown" (see ups-configuration.md)
 
 ## 🔧 OPNsense Configuration Reference
 

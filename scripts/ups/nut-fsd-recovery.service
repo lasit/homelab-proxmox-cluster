@@ -1,0 +1,16 @@
+[Unit]
+Description=NUT FSD Recovery - Clear stale shutdown flags after power return
+Documentation=file:///root/homelab-proxmox-cluster/docs/guides/ups-configuration.md
+After=nut-server.service
+Before=nut-monitor.service
+ConditionPathExists=/etc/killpower
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nut-fsd-recovery.sh
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

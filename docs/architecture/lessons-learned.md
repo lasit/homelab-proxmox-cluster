@@ -1,6 +1,6 @@
 # 🎓 Lessons Learned from Building a Proxmox Homelab
 
-**Last Updated:** 2025-12-02  
+**Last Updated:** 2026-04-09  
 **Project Duration:** 3 months (October - December 2025)  
 **Services Deployed:** 9 containers + infrastructure  
 **Mistakes Made:** Plenty (and documented!)
@@ -288,7 +288,18 @@ LISTEN 192.168.30.11 3493   # Storage VLAN
 
 **Lesson:** Distributed systems need coordinated shutdown
 
-### 46. UPS Runtime Estimates Are Optimistic
+### 46. NUT FSD Is a One-Way Flag (Power Return Does Not Clear It)
+
+**Incident:** 2026-04-09 power outage. Power returned, UPS online, but NUT still had FSD (Forced Shutdown) set. pve2/pve3 boot-looped because the NUT master kept telling them to shut down.  
+**Root Cause:** NUT designs FSD as a safety mechanism: once shutdown is initiated, it must complete. There is no built-in "power returned, abort shutdown" logic.  
+**Impact:** Manual intervention required on every power outage recovery.  
+**Solution:** Three changes:
+1. Improved `cluster-shutdown.sh` that checks UPS status before each step and aborts if power returns
+2. Boot-time `nut-fsd-recovery.service` that clears stale `/etc/killpower` and FSD before `nut-monitor` starts
+3. systemd drop-in ensuring recovery runs before monitor on all nodes  
+**Lesson:** Safety mechanisms that lack an "undo" path become operational hazards. Always design for the recovery case, not just the failure case.
+
+### 47. UPS Runtime Estimates Are Optimistic
 
 **Rule of Thumb:** Expect 70% of stated runtime  
 **Factors:** Battery age, temperature, load variation  
@@ -298,26 +309,26 @@ LISTEN 192.168.30.11 3493   # Storage VLAN
 
 ## Physical Infrastructure
 
-### 47. Rack Migration Requires Written Checklists
+### 48. Rack Migration Requires Written Checklists
 
 **First Attempt:** "I'll remember the order"  
 **Result:** Almost forgot Ceph flags  
 **Solution:** Written checklist for shutdown/startup sequence  
 **Lesson:** Complex operations need written procedures
 
-### 48. Switch Ports Reset After Physical Changes
+### 49. Switch Ports Reset After Physical Changes
 
 **Surprise:** UniFi Switch Port 15 reset to Default VLAN after rack move  
 **Impact:** Mac Pro unreachable  
 **Recovery:** Reconfigured via UniFi Controller  
 **Lesson:** Always verify switch config after physical changes
 
-### 49. Label Everything
+### 50. Label Everything
 
 Cables, ports, IPs on physical hosts  
 **Lesson:** Labels are cheap, confusion is expensive
 
-### 50. Keep ISP Network Available During Maintenance
+### 51. Keep ISP Network Available During Maintenance
 
 Dual-homed laptop provides fallback management path  
 **Lesson:** Always have a fallback management path

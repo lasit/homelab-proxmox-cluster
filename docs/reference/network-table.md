@@ -1,6 +1,6 @@
 # 🌐 Network Configuration Table
 
-**Last Updated:** 2025-12-07  
+**Last Updated:** 2026-04-09  
 **Status:** ✅ Operational  
 **Single Source of Truth for ALL Network Information**
 
@@ -112,6 +112,7 @@ INTERNET
 | .40 | UniFi Controller | CT107 | unifi.homelab.local | 8443,8080 | ✅ Running |
 | .53 | Pi-hole | CT101 | pihole.homelab.local | 53,80 | ✅ Running |
 | .61 | n8n | CT112 | automation.homelab.local | 5678 | ✅ Running |
+| .107 | Fronius Solar Inverter | - | solar.homelab.local | 80,443 | ✅ Running |
 | .100-200 | DHCP Pool | - | - | - | HomeNet WiFi clients |
 
 ### Neighbor VLAN (192.168.50.0/24) - ISOLATED
@@ -127,12 +128,13 @@ INTERNET
 | .100-.200 | DHCP Pool | IoT WiFi clients | DNS to Pi-hole, internet allowed |
 
 **Migrated IoT Devices (now on 192.168.60.x via iiNetBC09FB SSID):**
-- Fronius Inverter (solar monitoring)
 - Daikin AC units
 - Reolink Cameras
 - Xiaomi Gateway
 - ESP devices
 - Other smart home devices
+
+**Note:** Fronius Solar Inverter is on VLAN 40 (HomeNet WiFi) at 192.168.40.107, not on the IoT VLAN.
 
 ### Legacy ISP Network (10.1.1.0/24) - MINIMAL USE
 | IP | Device | Purpose | Notes |
@@ -161,7 +163,12 @@ Current configuration in `/etc/pihole/pihole.toml`:
 | pihole.homelab.local | 192.168.40.22 | A Record | ✅ Correct |
 | unifi.homelab.local | 192.168.40.40 | A Record | ✅ Correct |
 
-**Optional:** Add `pifrontdoor.homelab.local → 192.168.1.146` for Home Assistant access via .homelab.local domain
+| solar.homelab.local | 192.168.40.107 | A Record | ✅ Correct |
+| pifrontdoor.homelab.local | 192.168.1.146 | A Record | ✅ Correct |
+| openclaw.homelab.local | 192.168.70.80 | A Record | ✅ Correct |
+| cfc-am.homelab.local | 192.168.40.70 | A Record | ✅ Correct |
+
+**Note:** Pi-hole v6 stores custom DNS in `/etc/pihole/pihole.toml` (hosts array), not `custom.list`.
 
 **DNS Resolution Flow:**
 1. Client queries Pi-hole (192.168.40.53)
@@ -331,6 +338,7 @@ pct exec 100 -- tailscale status
 
 ## 📝 Recent Network Changes
 
+- **2026-04-09:** Fronius Solar Inverter (replacement unit) discovered at 192.168.40.107 on VLAN 40 (HomeNet WiFi), MAC 78:C4:0E:B4:98:E4 (H&D Wireless module). DHCP reservation created in OPNsense. Pi-hole DNS entry (solar.homelab.local) pending.
 - **2025-12-07:** Created iiNetBC09FB SSID on VLAN 60 for IoT device migration
 - **2025-12-07:** Disabled ISP WiFi networks (all devices migrated to UniFi)
 - **2025-12-07:** Moved pifrontdoor (Home Assistant) to wired Ethernet on Port 7

@@ -303,51 +303,48 @@ RUN_AS_USER nut
 
 ### Script: /usr/local/bin/cluster-shutdown.sh (pve1 only)
 
-```bash
-#!/bin/bash
-# Cluster-aware UPS shutdown script
-# Called by NUT when battery is critical
+**Version 2 (2026-04-09):** Improved with power-return detection, container timeouts, and abort cleanup.
 
-LOG=/var/log/ups-shutdown.log
-exec >> $LOG 2>&1
+Full source in repo: `scripts/ups/cluster-shutdown.sh`
 
-echo "========================================"
-echo "$(date): UPS shutdown initiated"
+**Key features:**
+- **Concurrency lock:** `flock` prevents double-invocation by NUT
+- **Power-return detection:** Checks UPS status before each container stop. Requires 2 consecutive OL readings 3s apart (filters grid flicker). All `upsc` calls wrapped in `timeout 5` to prevent hangs on stale driver.
+- **Container stop timeouts:** 45s graceful shutdown, then 15s force stop per container
+- **Abort cleanup:** If power returns mid-shutdown:
+  1. Restarts NUT driver + monitor (not server, to keep slave connections alive)
+  2. Removes `/etc/killpower`
+  3. Restarts stopped containers in dependency order
+  4. Unsets Ceph flags only after containers confirmed running
+  5. Writes `/run/cluster-shutdown-incomplete` if cleanup fails
+- **Dry-run mode:** `--dry-run` flag and `UPS_STATUS_CMD` override for safe testing
+- **Logging:** `logger -t cluster-shutdown` (journald) + `/var/log/ups-shutdown.log`
 
-# Step 1: Set Ceph maintenance flags
-echo "$(date): Setting Ceph maintenance flags..."
-ceph osd set noout
-ceph osd set nobackfill
-ceph osd set norebalance
-echo "$(date): Ceph flags set"
+**UPS status parsing:** Checks `OL` present AND `OB`/`FSD` absent. Handles compound statuses like `OL CHRG`, `OL TRIM`. On timeout/error, assumes still on battery (safe default).
 
-# Step 2: Stop containers gracefully (reverse dependency order)
-echo "$(date): Stopping containers..."
-for ct in 112 107 106 104 105 103 102 101 100; do
-    if pct status $ct 2>/dev/null | grep -q running; then
-        echo "$(date): Stopping CT$ct..."
-        pct shutdown $ct --timeout 30
-    fi
-done
-echo "$(date): Containers stopped"
+### Boot-Time FSD Recovery Service
 
-# Step 3: Unmount SSHFS if present
-if mountpoint -q /mnt/nas-storage 2>/dev/null; then
-    echo "$(date): Unmounting NAS storage..."
-    umount /mnt/nas-storage
-fi
+Automatically clears stale FSD flags on boot. Prevents the pve2/pve3 boot-loop problem.
 
-# Step 4: Shutdown
-echo "$(date): Initiating system shutdown"
-/sbin/shutdown -h +0
-```
+**Files:**
+- `/usr/local/bin/nut-fsd-recovery.sh` (master and slave variants)
+- `/etc/systemd/system/nut-fsd-recovery.service`
+- `/etc/systemd/system/nut-monitor.service.d/wait-for-recovery.conf`
+
+**How it works:**
+1. Runs after `nut-server` but before `nut-monitor` (enforced by systemd ordering + drop-in)
+2. If `/etc/killpower` exists and UPS reports OL: removes killpower and restarts NUT driver
+3. `nut-monitor` then starts with clean state
+4. On slaves: retries master connection for 60s. If master unreachable, removes killpower anyway (machine booted = power returned)
 
 ### Why This Matters
 
 1. **Ceph Flags** - Prevents Ceph from marking OSDs as "out" and starting unnecessary rebalancing
 2. **Container Order** - Stops containers in reverse dependency order for clean shutdown
-3. **SSHFS Unmount** - Prevents mount errors on next boot
-4. **Logging** - Creates audit trail in /var/log/ups-shutdown.log
+3. **Power-Return Abort** - Does not shut down if power comes back during the sequence
+4. **Container Timeouts** - No more infinite hangs on degraded Ceph
+5. **Boot Recovery** - Prevents slave boot-loop after power outages
+6. **Logging** - Creates audit trail in journald and /var/log/ups-shutdown.log
 
 ---
 
@@ -495,6 +492,8 @@ echo -e "\n=== Push Script Test ==="
 | "UPS not responding" in Kuma | NUT or network issue | Check NUT first, then network |
 | Connection refused | upsd not running | `systemctl restart nut-server` |
 | Authentication failed | Password mismatch | Compare upsd.users and upsmon.conf |
+| Nodes boot then shut down | FSD stuck after power outage | See "Power Outage Recovery" in Quick Reference |
+| `ups.status: FSD OL` | Shutdown flag not cleared | Kill shutdown script, rm /etc/killpower, restart NUT |
 
 ### Data Stale Error
 
@@ -859,7 +858,10 @@ If you need to recreate this setup:
 | upsd.conf | /etc/nut/ | Server config (pve1 only) |
 | upsd.users | /etc/nut/ | Authentication |
 | upsmon.conf | /etc/nut/ | Monitor config |
-| cluster-shutdown.sh | /usr/local/bin/ | Graceful shutdown (pve1) |
+| cluster-shutdown.sh | /usr/local/bin/ | Graceful shutdown with power-return detection (pve1) |
+| nut-fsd-recovery.sh | /usr/local/bin/ | Boot-time FSD recovery (all nodes) |
+| nut-fsd-recovery.service | /etc/systemd/system/ | Systemd unit for boot recovery (all nodes) |
+| wait-for-recovery.conf | /etc/systemd/system/nut-monitor.service.d/ | Drop-in to order recovery before monitor (all nodes) |
 | ups-monitor-push.sh | /usr/local/bin/ | Uptime Kuma push script (pve1) |
 | ups-monitor | /etc/cron.d/ | Cron job for push script (pve1) |
 
@@ -884,6 +886,53 @@ shutdown -c
 /usr/local/bin/cluster-shutdown.sh
 ```
 
+### Power Outage Recovery (FSD Stuck)
+
+After a power outage, pve2/pve3 may boot and immediately shut down again. This happens because NUT's Forced Shutdown (FSD) flag persists after power returns. This is normal NUT behavior, not a bug.
+
+**Symptoms:**
+- pve2/pve3 boot but shut down within 30-60 seconds
+- `upsc cyberpower@localhost ups.status` shows `FSD OL` (Forced Shutdown + Online)
+- `/etc/killpower` exists on pve1
+- `cluster-shutdown.sh` may be stuck in the process list
+
+**Recovery procedure (run on pve1):**
+
+```bash
+# Step 1: Kill any stuck shutdown script
+pkill -f cluster-shutdown.sh
+
+# Step 2: Remove the killpower flag
+rm -f /etc/killpower
+
+# Step 3: Restart NUT services to clear FSD
+systemctl restart nut-driver@cyberpower.service
+sleep 3
+systemctl restart nut-server.service
+sleep 2
+systemctl kill nut-monitor.service    # May be stuck in deactivating
+sleep 2
+systemctl start nut-monitor.service
+
+# Step 4: Verify FSD is cleared
+upsc cyberpower@localhost ups.status
+# Should show "OL" (not "FSD OL")
+
+# Step 5: Verify killpower is gone
+ls /etc/killpower 2>/dev/null && echo "WARNING: killpower still exists!" || echo "Clean"
+
+# Step 6: Power on pve2 and pve3 (physically press power button)
+# They should now stay online
+
+# Step 7: Wait ~3 minutes, then verify cluster
+pvecm status
+ceph -s
+```
+
+**Why this happens:** NUT treats FSD as a one-way flag. Once shutdown is initiated, NUT assumes it must complete even if power returns. This is a safety design choice: better to complete a shutdown than risk partial state. The trade-off is that manual intervention is required on recovery.
+
+**Why pve1 sometimes survives:** If the `cluster-shutdown.sh` script gets stuck (e.g., Ceph is degraded and `pct stop` hangs), pve1 never reaches the final `shutdown -h +0` command. This is accidentally beneficial but unreliable.
+
 ### Quick Fixes
 
 ```bash
@@ -900,6 +949,30 @@ systemctl restart nut-driver.target && sleep 3 && systemctl restart nut-server &
 ---
 
 ## Incident Log
+
+### 2026-04-09: FSD Stuck After Power Outage (Nodes Boot-Loop)
+
+**Symptom:** Power outage occurred. After power returned, pve2 and pve3 would boot then immediately shut down again. pve1 was still running but with 7/9 containers stopped and Ceph degraded.
+
+**Cause:** NUT set FSD (Forced Shutdown) during the power outage. When power returned, the FSD flag and `/etc/killpower` were never cleared. pve1's `cluster-shutdown.sh` was stuck trying to stop Pi-hole (Ceph was degraded since pve2/pve3 were already down). pve2/pve3 booted, queried the NUT master, saw FSD, and obediently shut down.
+
+**Resolution:**
+1. Killed stuck `cluster-shutdown.sh` on pve1
+2. Removed `/etc/killpower`
+3. Restarted all NUT services (`nut-driver@cyberpower`, `nut-server`, `nut-monitor`)
+4. Verified UPS status changed from `FSD OL` to `OL`
+5. Powered on pve2/pve3 (stayed up this time)
+6. Waited for Ceph quorum, then started containers
+
+**Lessons:**
+- NUT FSD is a one-way flag; power returning does not clear it
+- The `cluster-shutdown.sh` script needs a "power returned" abort check
+- Container shutdown with `pct stop` can hang indefinitely on degraded Ceph
+- See "Power Outage Recovery" section in Quick Reference for the full procedure
+
+**Time to recover:** ~15 minutes from diagnosis to cluster healthy
+
+---
 
 ### 2025-12-07: Data Stale After Network Disruption
 
